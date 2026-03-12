@@ -1510,8 +1510,8 @@
   var cAddBtn = document.getElementById('c_addBtn');
 
   var scenarios = [
-    { name: 'Scenario A', outlets: 20, parking: 8, occ: 100, kwPerHub: 44, totalKw: '' },
-    { name: 'Scenario B', outlets: 40, parking: 10, occ: 70, kwPerHub: 44, totalKw: '' }
+    { name: 'Scenario A', outlets: 20, parking: 8, occ: 100, kwPerHub: 44, numHubs: '', totalKw: '' },
+    { name: 'Scenario B', outlets: 40, parking: 10, occ: 70, kwPerHub: 44, numHubs: '', totalKw: '' }
   ];
 
   function cCalcScenario(s) {
@@ -1520,7 +1520,10 @@
     var occ = Math.max(10, Math.min(100, parseInt(s.occ) || 100));
     var kwPerHub = Math.min(44, Math.max(1, parseFloat(s.kwPerHub) || 44));
     var activeSockets = Math.max(1, Math.ceil(outlets * occ / 100));
-    var numHubs = Math.ceil(outlets / 54);
+    var autoHubs = Math.ceil(outlets / 54);
+    var manualHubs = parseInt(s.numHubs);
+    // Manual value must be >= auto minimum (floor rule)
+    var numHubs = (isNaN(manualHubs) || manualHubs < 1) ? autoHubs : Math.max(autoHubs, manualHubs);
     var installedKw = numHubs * kwPerHub;
 
     var totalKwRaw = parseFloat(s.totalKw);
@@ -1560,6 +1563,7 @@
         (canRemove ? '<button class="remove-scenario-btn" onclick="removeScenario(' + i + ')" title="Ta bort">&times;</button>' : '') +
         '<div class="card-label">' + s.name + '</div>' +
         '<div class="card-field"><label>Uttag</label><input type="text" inputmode="numeric" pattern="[0-9]*" value="' + s.outlets + '" data-i="' + i + '" data-key="outlets"></div>' +
+        '<div class="card-field"><label>SmartHubs</label><input type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Auto" value="' + (s.numHubs || '') + '" data-i="' + i + '" data-key="numHubs"></div>' +
         '<div class="card-field"><label>Parkeringstid (h)</label><input type="text" inputmode="decimal" value="' + s.parking + '" data-i="' + i + '" data-key="parking"></div>' +
         '<div class="card-field"><label>Beläggningsgrad (%)</label><input type="text" inputmode="numeric" pattern="[0-9]*" value="' + s.occ + '" data-i="' + i + '" data-key="occ"></div>' +
         '<div class="card-field"><label>kW/SmartHub</label><input type="text" inputmode="numeric" pattern="[0-9]*" value="' + s.kwPerHub + '" data-i="' + i + '" data-key="kwPerHub"></div>' +
@@ -1626,7 +1630,7 @@
     if (scenarios.length >= 6) return;
     scenarios.push({
       name: scenarioNames[scenarios.length],
-      outlets: 30, parking: 8, occ: 80, kwPerHub: 44, totalKw: ''
+      outlets: 30, parking: 8, occ: 80, kwPerHub: 44, numHubs: '', totalKw: ''
     });
     renderCompare();
   };
@@ -1655,8 +1659,8 @@
 
   window.resetCompare = function() {
     scenarios = [
-      { name: 'Scenario A', outlets: 20, parking: 8, occ: 100, kwPerHub: 44, totalKw: '' },
-      { name: 'Scenario B', outlets: 40, parking: 10, occ: 70, kwPerHub: 44, totalKw: '' }
+      { name: 'Scenario A', outlets: 20, parking: 8, occ: 100, kwPerHub: 44, numHubs: '', totalKw: '' },
+      { name: 'Scenario B', outlets: 40, parking: 10, occ: 70, kwPerHub: 44, numHubs: '', totalKw: '' }
     ];
     renderCompare();
   };
