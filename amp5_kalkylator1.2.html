@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amp5 Laddkalkylator</title>
+<style>
+:root{--orange:#F46036;--orange-dark:#86341E;--orange-light:#F5A888;--green:#58A08B;--black:#272120;--pure-black:#000000;--white:#FFFFFF;--surface:#1a1716;--surface2:#231f1e;--surface3:#2e2928;--border:#3d3634;--border-light:#4a4241;--text:#f5f2f0;--text-secondary:#b5aeab;--text-muted:#7a706c;--warning:#ffb74d;--error:#ef5350;--error-bg:rgba(239,83,80,0.1);--radius:12px;--radius-sm:8px;--font-heading:Georgia,'Times New Roman',serif;--font-body:Arial,Helvetica,sans-serif}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-body);background:var(--pure-black);color:var(--text);line-height:1.5;min-height:100vh;-webkit-font-smoothing:antialiased}
+header{padding:1.8rem 1.5rem 1.5rem;text-align:center;background:var(--black);border-bottom:1px solid var(--border)}
+header h1{font-family:var(--font-heading);font-size:1.5rem;font-weight:700;letter-spacing:-.02em;color:var(--text)}
+header p{font-size:.82rem;color:var(--text-secondary);margin-top:.3rem;max-width:420px;margin-left:auto;margin-right:auto}
+.brand-bar{width:48px;height:4px;background:var(--orange);border-radius:2px;margin:.8rem auto 0}
+.tab-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border);max-width:700px;margin:0 auto}
+.tab-btn{flex:1;padding:.85rem 1rem;background:none;border:none;color:var(--text-muted);font-family:var(--font-body);font-size:.82rem;font-weight:700;letter-spacing:.03em;cursor:pointer;position:relative;transition:color .2s}
+.tab-btn:hover{color:var(--text-secondary)}
+.tab-btn.active{color:var(--orange)}
+.tab-btn.active::after{content:'';position:absolute;bottom:0;left:20%;right:20%;height:3px;background:var(--orange);border-radius:2px 2px 0 0}
+.tab-panel{display:none}.tab-panel.active{display:block}
+.container{max-width:700px;margin:0 auto;padding:1rem}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;margin-bottom:1rem}
+.section-title{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--orange);margin-bottom:1rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+@media(max-width:500px){.grid{grid-template-columns:1fr}}
+.field{margin-bottom:0}
+.field label{display:block;font-size:.78rem;font-weight:700;color:var(--text-secondary);margin-bottom:.35rem}
+.field label .unit{font-weight:400;color:var(--text-muted)}
+.field input[type=number]{width:100%;padding:.55rem .7rem;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:.9rem;font-family:var(--font-body);outline:none;transition:border-color .2s;-moz-appearance:textfield}
+.field input[type=number]::-webkit-inner-spin-button,.field input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.field input[type=number]:focus{border-color:var(--orange)}
+.slider-group{margin-bottom:.6rem}
+.slider-row{display:flex;align-items:center;gap:.8rem}
+.slider-row input[type=range]{flex:1;height:6px;-webkit-appearance:none;appearance:none;background:var(--border);border-radius:3px;outline:none;cursor:pointer}
+.slider-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--orange);border:2px solid var(--surface);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.slider-row input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:var(--orange);border:2px solid var(--surface);cursor:pointer}
+.slider-val{min-width:40px;text-align:right;font-size:.95rem;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}
+.help{display:block;font-size:.72rem;color:var(--text-muted);margin-top:.25rem}
+.global-error{background:var(--error-bg);border:1px solid var(--error);border-radius:var(--radius-sm);color:var(--error);padding:.6rem .8rem;font-size:.78rem;margin-bottom:.8rem;display:none}
+.global-error.visible{display:block}
+.derived{background:var(--surface2);border-radius:var(--radius-sm);padding:.6rem .8rem;font-size:.78rem;color:var(--text-secondary);margin-top:.8rem;border-left:3px solid var(--orange)}
+.derived span{color:var(--text);font-weight:700}
+.total-kw-row{margin-top:.8rem;padding-top:.8rem;border-top:1px solid var(--border);display:none}
+.total-kw-row.visible{display:block}
+.result-hero{text-align:center;padding:1.5rem 0;margin-bottom:1rem;border-bottom:1px solid var(--border)}
+.result-hero .label{font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary)}
+.result-hero .value{font-family:var(--font-heading);font-size:3rem;font-weight:700;color:var(--orange);margin:.2rem 0;line-height:1.1}
+.result-hero .sub{font-size:.82rem;color:var(--text-muted)}
+.result-grid{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}
+@media(max-width:500px){.result-grid{grid-template-columns:1fr}}
+.result-item{background:var(--surface2);border-radius:var(--radius-sm);padding:.6rem .75rem}
+.result-item .r-label{font-size:.7rem;color:var(--text-muted)}
+.result-item .r-value{font-size:1rem;font-weight:700;color:var(--text);margin-top:.1rem}
+.result-item.highlight{border:1px solid var(--orange);background:rgba(244,96,54,.06)}
+.result-item.highlight .r-value{color:var(--orange)}
+.info-box{background:var(--surface2);border-radius:var(--radius-sm);padding:.6rem .8rem;font-size:.72rem;color:var(--text-muted);margin-top:1rem;border-left:3px solid var(--green)}
+.btn-row{display:flex;gap:.6rem;margin-top:1rem;flex-wrap:wrap}
+.btn{padding:.6rem 1.2rem;border:none;border-radius:var(--radius-sm);font-family:var(--font-body);font-size:.8rem;font-weight:700;cursor:pointer;transition:all .2s}
+.btn-primary{background:var(--orange);color:var(--white)}
+.btn-primary:hover{background:var(--orange-dark)}
+.btn-secondary{background:var(--surface3);color:var(--text-secondary);border:1px solid var(--border)}
+.btn-secondary:hover{background:var(--border);color:var(--text)}
+.btn .copied{display:none}
+.btn.is-copied .default{display:none}
+.btn.is-copied .copied{display:inline}
+.chart-wrap{position:relative;width:100%}
+.chart-wrap canvas{width:100%;height:220px;display:block}
+#c_chart{height:280px}
+.car-selector{display:flex;align-items:center;flex-wrap:wrap;gap:.4rem;margin-bottom:.8rem}
+.car-selector select{padding:.4rem .6rem;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--font-body);font-size:.82rem;outline:none;cursor:pointer}
+.car-selector select:focus{border-color:var(--orange)}
+.car-range-display{display:flex;align-items:center;gap:1rem;padding:.8rem;background:var(--surface2);border-radius:var(--radius-sm);border-left:3px solid var(--orange)}
+.car-range-icon{font-size:1.8rem;line-height:1}
+.car-range-text .range-km{font-family:var(--font-heading);font-size:1.6rem;font-weight:700;color:var(--orange);line-height:1.1}
+.car-range-text .range-label{font-size:.75rem;color:var(--text-secondary)}
+.car-range-bar{flex:1;min-width:60px}
+.car-range-bar-track{height:8px;background:var(--border);border-radius:4px;overflow:hidden}
+.car-range-bar-fill{height:100%;background:var(--orange);border-radius:4px;transition:width .4s ease}
+.car-range-bar-label{font-size:.68rem;color:var(--text-muted);margin-top:.2rem;text-align:right}
+.compare-grid{display:grid;grid-template-columns:1fr;gap:1rem}
+@media(min-width:640px){.compare-grid{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}}
+.scenario-card{background:var(--surface);border:2px solid var(--border);border-radius:var(--radius);padding:1rem;position:relative}
+.scenario-card:nth-child(1){border-top-color:var(--orange)}
+.scenario-card:nth-child(2){border-top-color:var(--green)}
+.scenario-card:nth-child(3){border-top-color:var(--orange-light)}
+.scenario-card:nth-child(4){border-top-color:#7BAFD4}
+.scenario-card:nth-child(5){border-top-color:#D4A574}
+.scenario-card:nth-child(6){border-top-color:#A8D4A0}
+.scenario-card .card-label{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.8rem;padding-bottom:.4rem;border-bottom:1px solid var(--border)}
+.scenario-card:nth-child(1) .card-label{color:var(--orange)}
+.scenario-card:nth-child(2) .card-label{color:var(--green)}
+.scenario-card:nth-child(3) .card-label{color:var(--orange-light)}
+.scenario-card:nth-child(4) .card-label{color:#7BAFD4}
+.scenario-card:nth-child(5) .card-label{color:#D4A574}
+.scenario-card:nth-child(6) .card-label{color:#A8D4A0}
+.scenario-card .card-field{margin-bottom:.6rem}
+.scenario-card .card-field label{display:block;font-size:.7rem;color:var(--text-muted);margin-bottom:.2rem}
+.scenario-card .card-field input{width:100%;padding:.4rem .55rem;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:.85rem;font-family:var(--font-body);outline:none}
+.scenario-card .card-field input:focus{border-color:var(--orange)}
+.scenario-card .card-results{margin-top:.8rem;padding-top:.8rem;border-top:1px solid var(--border)}
+.scenario-card .card-hero{text-align:center;margin-bottom:.6rem}
+.scenario-card .card-hero .val{font-family:var(--font-heading);font-size:2.2rem;font-weight:700;line-height:1.1}
+.scenario-card .card-hero .unit{font-size:.72rem;color:var(--text-muted)}
+.scenario-card .card-stat{display:flex;justify-content:space-between;font-size:.72rem;padding:.2rem 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.scenario-card .card-stat .stat-label{color:var(--text-muted)}
+.scenario-card .card-stat .stat-val{color:var(--text);font-weight:700}
+.kwh-bar-wrap{height:6px;background:var(--surface2);border-radius:3px;margin-top:.5rem;overflow:hidden}
+.kwh-bar{height:100%;border-radius:3px;transition:width .4s ease}
+.compare-actions{display:flex;gap:.6rem;margin-top:1rem;flex-wrap:wrap;align-items:center}
+.add-scenario-btn{padding:.5rem 1rem;background:var(--surface2);border:1px dashed var(--border-light);border-radius:var(--radius-sm);color:var(--text-muted);font-family:var(--font-body);font-size:.78rem;cursor:pointer;transition:all .2s}
+.add-scenario-btn:hover{border-color:var(--orange);color:var(--orange)}
+.remove-scenario-btn{position:absolute;top:.6rem;right:.6rem;width:22px;height:22px;background:var(--surface2);border:1px solid var(--border);border-radius:50%;color:var(--text-muted);font-size:.7rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;line-height:1}
+.remove-scenario-btn:hover{background:var(--error);color:white;border-color:var(--error)}
+footer{text-align:center;padding:1.5rem;font-size:.7rem;color:var(--text-muted);border-top:1px solid var(--border);margin-top:1rem}
+.btn-pdf{padding:.55rem 1.1rem;background:var(--surface3);border:1px solid var(--orange);border-radius:var(--radius-sm);color:var(--orange);font-family:var(--font-body);font-size:.78rem;font-weight:700;cursor:pointer;transition:all .2s;letter-spacing:.02em}
+.btn-pdf:hover{background:var(--orange);color:var(--white)}
+.btn-pdf:disabled{opacity:.5;cursor:wait}
+/* ── Profile cards ── */
+.profile-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.5rem;margin-bottom:.8rem}
+@media(max-width:500px){.profile-grid{grid-template-columns:1fr 1fr}}
+.profile-card{background:var(--surface2);border:2px solid var(--border);border-radius:var(--radius-sm);padding:.6rem .7rem;min-height:64px;cursor:pointer;transition:all .2s;display:flex;flex-direction:column;justify-content:center}
+.profile-card:hover{border-color:var(--border-light);background:var(--surface3)}
+.profile-card.active{border-color:var(--orange);background:rgba(244,96,54,.06)}
+.profile-card .pc-icon{font-size:1.1rem;line-height:1;margin-bottom:.25rem}
+.profile-card .pc-name{font-size:.75rem;font-weight:700;color:var(--text);line-height:1.2}
+.profile-card.active .pc-name{color:var(--orange)}
+.profile-card .pc-desc{font-size:.65rem;color:var(--text-muted);line-height:1.3;margin-top:.15rem}
+.profile-derived{margin-top:.4rem}
+/* ── Onboarding tour ── */
+.tour-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:999;transition:opacity .2s}
+.tour-highlight{position:relative;z-index:1001}
+.tour-tooltip{position:absolute;z-index:1000;background:var(--surface);border:1px solid var(--orange);border-radius:var(--radius);padding:1rem 1.2rem;max-width:300px;width:calc(100vw - 32px);box-shadow:0 8px 32px rgba(0,0,0,.5);animation:tourFadeIn .25s ease}
+@keyframes tourFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.tour-tooltip::before{content:'';position:absolute;width:12px;height:12px;background:var(--surface);border:1px solid var(--orange);transform:rotate(45deg)}
+.tour-tooltip.pos-below::before{top:-7px;left:var(--arrow-left,24px);border-right:none;border-bottom:none}
+.tour-tooltip.pos-above::before{bottom:-7px;left:var(--arrow-left,24px);border-left:none;border-top:none}
+.tour-title{font-size:.85rem;font-weight:700;color:var(--orange);margin-bottom:.35rem}
+.tour-text{font-size:.78rem;color:var(--text-secondary);line-height:1.5}
+.tour-footer{display:flex;justify-content:space-between;align-items:center;margin-top:.8rem}
+.tour-dots{display:flex;gap:5px}
+.tour-dot{width:7px;height:7px;border-radius:50%;background:var(--border);transition:background .2s}
+.tour-dot.active{background:var(--orange)}
+.tour-next{padding:.45rem 1rem;background:var(--orange);color:var(--white);border:none;border-radius:var(--radius-sm);font-size:.78rem;font-weight:700;cursor:pointer;min-height:36px;transition:background .2s}
+.tour-next:hover{background:var(--orange-dark)}
+.tour-skip{background:none;border:none;color:var(--text-muted);font-size:.72rem;cursor:pointer;text-decoration:underline;padding:.2rem 0}
+.tour-skip:hover{color:var(--text-secondary)}
+/* ── Mobile touch targets (44px min) ── */
+@media(max-width:600px){
+.slider-row input[type=range]{height:44px;padding:19px 0;touch-action:manipulation}
+.slider-row input[type=range]::-webkit-slider-thumb{width:28px;height:28px}
+.slider-row input[type=range]::-moz-range-thumb{width:28px;height:28px}
+.field input[type=number]{min-height:44px}
+.scenario-card .card-field input{min-height:44px;padding:.5rem .65rem}
+.car-selector select{min-height:44px;padding:.5rem .65rem}
+.tab-btn{min-height:44px}
+.btn,.btn-pdf,.add-scenario-btn{min-height:44px}
+.remove-scenario-btn{width:32px;height:32px;font-size:.85rem}
+.remove-scenario-btn::after{content:'';position:absolute;top:50%;left:50%;width:44px;height:44px;transform:translate(-50%,-50%)}
+}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>Amp5 Laddkalkylator</h1>
+  <p>Beräkna energi, dimensionera SmartHubs eller jämför scenarier</p>
+  <div class="brand-bar"></div>
+</header>
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="energy" onclick="switchTab('energy')">Beräkna energi</button>
+  <button class="tab-btn" data-tab="hubs" onclick="switchTab('hubs')">Beräkna SmartHubs</button>
+  <button class="tab-btn" data-tab="compare" onclick="switchTab('compare')">Jämför scenarier</button>
+</div>
+
+<!-- TAB 1 -->
+<div class="tab-panel active" id="panel-energy"><div class="container">
+  <div class="section">
+    <div class="section-title">Systemkonfiguration</div>
+    <div class="slider-group"><div class="field"><label>Antal uttag</label>
+      <div class="slider-row"><input type="range" id="e_outletSlider" min="1" max="250" step="1" value="20"><span class="slider-val" id="e_outletVal">20</span></div>
+    </div></div>
+    <div class="grid" style="margin-top:.5rem">
+      <div class="field"><label>Antal SmartHubs</label><input type="number" id="e_numHubs" min="1" step="1" value="1"><span class="help">Auto: max 54 uttag/hub</span></div>
+      <div class="field"><label>Kapacitet/SmartHub <span class="unit">(kW)</span></label><input type="number" id="e_kwPerHub" min="1" max="44" step="1" value="44"></div>
+    </div>
+    <!-- FIX 3: always visible -->
+    <div class="total-kw-row visible" id="e_totalKwRow">
+      <div class="field"><label>Total tillgänglig systemeffekt <span class="unit">(kW)</span></label>
+        <input type="number" id="e_totalKw" min="1" step="1" value="44">
+        <span class="help">Kan sänkas om fastigheten har effektbegränsning.</span>
+      </div>
+    </div>
+    <div class="derived" id="e_derivedInfo" style="display:none"></div>
+  </div>
+  <div class="section">
+    <div class="section-title">Parkeringsparametrar</div>
+    <div class="slider-group"><div class="field"><label>Parkeringstid <span class="unit">(timmar)</span></label>
+      <div class="slider-row"><input type="range" id="e_parkingSlider" min="3" max="24" step="0.5" value="8"><span class="slider-val" id="e_parkingVal">8</span></div>
+    </div></div>
+    <div class="field"><label>Beläggningsprofil</label></div>
+    <div class="profile-grid" id="e_profileGrid">
+      <div class="profile-card active" data-profile="kontor"><span class="pc-icon">🏢</span><span class="pc-name">Kontor</span><span class="pc-desc">Hög morgon, lugnt eftermiddag</span></div>
+      <div class="profile-card" data-profile="kopcenter"><span class="pc-icon">🏬</span><span class="pc-name">Köpcentrum</span><span class="pc-desc">Lugn morgon, hög dag och kväll</span></div>
+      <div class="profile-card" data-profile="bostad"><span class="pc-icon">🏠</span><span class="pc-name">Bostad</span><span class="pc-desc">Låg dag, hög kväll och natt</span></div>
+      <div class="profile-card" data-profile="custom"><span class="pc-icon">⚡</span><span class="pc-name">Anpassad</span><span class="pc-desc">Ställ in manuellt</span></div>
+    </div>
+    <div class="derived profile-derived" id="e_profileDerived">Viktat snitt: <span>85%</span> beläggning · baserat på kontorsprofil</div>
+    <div class="slider-group" id="e_occSliderGroup" style="display:none"><div class="field"><label>Beläggningsgrad <span class="unit">(%)</span></label>
+      <div class="slider-row"><input type="range" id="e_occSlider" min="10" max="100" step="5" value="85"><span class="slider-val" id="e_occVal">85%</span></div>
+      <span class="help">Andel av uttagen som används samtidigt.</span>
+    </div></div>
+  </div>
+  <div id="e_globalError" class="global-error"></div>
+  <div class="section" id="e_resultsSection">
+    <div class="section-title">Resultat</div>
+    <div class="result-hero"><div class="label">Energi per uttag</div><div class="value" id="e_heroValue">—</div><div class="sub">kWh / uttag</div></div>
+    <div class="result-grid">
+      <div class="result-item"><div class="r-label">Installerad kapacitet</div><div class="r-value" id="e_rInstalled">—</div></div>
+      <div class="result-item" id="e_rEffectiveItem" style="display:none"><div class="r-label">Effektiv kapacitet</div><div class="r-value" id="e_rEffective">—</div></div>
+      <div class="result-item"><div class="r-label">Total energi</div><div class="r-value" id="e_rTotalEnergy">—</div></div>
+      <div class="result-item"><div class="r-label">Aktiva uttag</div><div class="r-value" id="e_rActiveSockets">—</div></div>
+      <div class="result-item"><div class="r-label">Snitteffekt per uttag</div><div class="r-value" id="e_rPowerPerSocket">—</div></div>
+      <div class="result-item"><div class="r-label">Max uttag totalt</div><div class="r-value" id="e_rMaxSockets">—</div></div>
+    </div>
+    <div class="info-box">Beräkningen antar att all tillgänglig effekt fördelas jämnt mellan aktiva uttag under hela parkeringstiden. I verkligheten kan lastbalansering påverka fördelningen.</div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="e_copyBtn" onclick="copyEnergyResults()"><span class="default">Kopiera resultat</span><span class="copied">✓ Kopierat!</span></button>
+      <button class="btn btn-pdf" id="e_pdfBtn" onclick="exportEnergyPDF()">Exportera PDF</button>
+      <button class="btn btn-secondary" onclick="resetEnergy()">Återställ</button>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">Vad räcker det till?</div>
+    <div class="car-selector"><label style="font-size:.75rem;color:var(--text-secondary);margin-right:.5rem">Välj bilmodell:</label><select id="e_carSelect" onchange="onCarSelectChange(this)"></select></div>
+    <div class="car-range-display" id="e_carRange"></div>
+    <span class="help" style="display:block;margin-top:.4rem">Uppskattning baserad på WLTP-blandad förbrukning (EV Database). Verklig räckvidd varierar.</span>
+  </div>
+  <div class="section">
+    <div class="section-title">kWh/uttag vs. parkeringstid</div>
+    <div class="chart-wrap"><canvas id="e_chart"></canvas></div>
+    <span class="help" style="display:block;margin-top:.4rem">Centrerad ±10h kring vald parkeringstid.</span>
+  </div>
+</div></div>
+
+<!-- TAB 2 -->
+<div class="tab-panel" id="panel-hubs"><div class="container">
+  <div class="section">
+    <div class="section-title">Ditt behov</div>
+    <div class="slider-group"><div class="field"><label>Antal platser (uttag)</label>
+      <div class="slider-row"><input type="range" id="h_outletSlider" min="1" max="250" step="1" value="40"><span class="slider-val" id="h_outletVal">40</span></div>
+    </div></div>
+    <div class="grid" style="margin-top:.5rem">
+      <div class="field"><label>Önskad energi per uttag <span class="unit">(kWh)</span></label><input type="number" id="h_targetKwh" min="1" max="200" step="0.5" value="15"></div>
+      <div class="field"><label>Parkeringstid <span class="unit">(timmar)</span></label><input type="number" id="h_parkingTime" min="3" max="24" step="0.5" value="8"></div>
+    </div>
+    <div class="slider-group" style="margin-top:.8rem"><div class="field"><label>Beläggningsgrad <span class="unit">(%)</span></label>
+      <div class="slider-row"><input type="range" id="h_occSlider" min="10" max="100" step="5" value="100"><span class="slider-val" id="h_occVal">100%</span></div>
+      <span class="help">Andel av uttagen som används samtidigt.</span>
+    </div></div>
+    <div class="grid" style="margin-top:.5rem">
+      <div class="field"><label>Kapacitet/SmartHub <span class="unit">(kW)</span></label><input type="number" id="h_kwPerHub" min="1" max="44" step="1" value="44"></div>
+    </div>
+    <div class="total-kw-row visible" id="h_totalKwRow" style="margin-top:.8rem;padding-top:.8rem;border-top:1px solid var(--border)">
+      <div class="field"><label>Total tillgänglig systemeffekt <span class="unit">(kW)</span></label>
+        <input type="number" id="h_totalKw" min="1" step="1" value="">
+        <span class="help">Fastighetens effekttak. Lämna tomt för obegränsat.</span>
+      </div>
+    </div>
+    <div class="derived" id="h_derivedInfo" style="display:none"></div>
+  </div>
+  <div id="h_globalError" class="global-error"></div>
+  <div class="section" id="h_resultsSection">
+    <div class="section-title">Resultat</div>
+    <div class="result-hero"><div class="label">SmartHubs som krävs</div><div class="value" id="h_heroValue">—</div><div class="sub">SmartHub(s)</div></div>
+    <div class="result-grid">
+      <div class="result-item highlight"><div class="r-label">Kräver minst effekt</div><div class="r-value" id="h_rRequiredKw">—</div></div>
+      <div class="result-item highlight"><div class="r-label">Installerad kapacitet</div><div class="r-value" id="h_rInstalledKw">—</div></div>
+      <div class="result-item" id="h_rEffectiveItem" style="display:none"><div class="r-label">Effektiv kapacitet (efter tak)</div><div class="r-value" id="h_rEffectiveKw">—</div></div>
+      <div class="result-item"><div class="r-label">Aktiva uttag</div><div class="r-value" id="h_rActiveSockets">—</div></div>
+      <div class="result-item"><div class="r-label">Faktisk energi/uttag</div><div class="r-value" id="h_rActualKwh">—</div></div>
+      <div class="result-item"><div class="r-label">Hubs pga uttag (54/hub)</div><div class="r-value" id="h_rHubsBySlots">—</div></div>
+      <div class="result-item"><div class="r-label">Hubs pga effekt</div><div class="r-value" id="h_rHubsByPower">—</div></div>
+    </div>
+    <div class="info-box" id="h_infoBox">Antalet SmartHubs bestäms av det högsta av två krav: fysiska uttag (max 54/hub) och den effekt som krävs.</div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="h_copyBtn" onclick="copyHubResults()"><span class="default">Kopiera resultat</span><span class="copied">✓ Kopierat!</span></button>
+      <button class="btn btn-pdf" id="h_pdfBtn" onclick="exportHubsPDF()">Exportera PDF</button>
+      <button class="btn btn-secondary" onclick="resetHubs()">Återställ</button>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">Vad räcker det till?</div>
+    <div class="car-selector"><label style="font-size:.75rem;color:var(--text-secondary);margin-right:.5rem">Välj bilmodell:</label><select id="h_carSelect" onchange="onCarSelectChange(this)"></select></div>
+    <div class="car-range-display" id="h_carRange"></div>
+    <span class="help" style="display:block;margin-top:.4rem">Uppskattning baserad på WLTP-blandad förbrukning (EV Database). Verklig räckvidd varierar.</span>
+  </div>
+  <div class="section">
+    <div class="section-title">SmartHubs vs. önskad energi per uttag</div>
+    <div class="chart-wrap"><canvas id="h_chart"></canvas></div>
+    <span class="help" style="display:block;margin-top:.4rem">Visar antal SmartHubs som funktion av önskad kWh/uttag.</span>
+  </div>
+</div></div>
+
+<!-- TAB 3 -->
+<div class="tab-panel" id="panel-compare"><div class="container">
+  <div class="section">
+    <div class="section-title">Jämför scenarier</div>
+    <span class="help" style="display:block;margin-bottom:1rem">Ändra värdena direkt i varje kort. Resultaten uppdateras live. Max 54 uttag/hub, 44 kW/hub.</span>
+    <div class="compare-grid" id="c_grid"></div>
+    <div class="compare-actions">
+      <button class="add-scenario-btn" id="c_addBtn" onclick="addScenario()">+ Lägg till scenario</button>
+      <button class="btn btn-primary" id="c_copyBtn" onclick="copyCompareResults()"><span class="default">Kopiera jämförelse</span><span class="copied">✓ Kopierat!</span></button>
+      <button class="btn btn-pdf" id="c_pdfBtn" onclick="exportComparePDF()">Exportera PDF</button>
+      <button class="btn btn-secondary" onclick="resetCompare()">Återställ</button>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">Jämförelsediagram</div>
+    <div class="chart-wrap"><canvas id="c_chart"></canvas></div>
+  </div>
+</div></div>
+
+<footer>Amp5 Laddkalkylator – AmpSociety &mdash; Förenklad beräkningsmodell</footer>
+
+<script>
+(function(){
+'use strict';
+
+window.switchTab=function(tab){
+  document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===tab);});
+  document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.toggle('active',p.id==='panel-'+tab);});
+  if(tab==='energy')renderEnergy();
+  else if(tab==='hubs')renderHubs();
+  else if(tab==='compare')renderCompare();
+};
+
+// ── TAB 1: ENERGY ──────────────────────────────────────
+var eE={
+  outletSlider:document.getElementById('e_outletSlider'),
+  outletVal:document.getElementById('e_outletVal'),
+  numHubs:document.getElementById('e_numHubs'),
+  kwPerHub:document.getElementById('e_kwPerHub'),
+  totalKwRow:document.getElementById('e_totalKwRow'),
+  totalKw:document.getElementById('e_totalKw'),
+  derivedInfo:document.getElementById('e_derivedInfo'),
+  parkingSlider:document.getElementById('e_parkingSlider'),
+  parkingVal:document.getElementById('e_parkingVal'),
+  occSlider:document.getElementById('e_occSlider'),
+  occVal:document.getElementById('e_occVal'),
+  globalError:document.getElementById('e_globalError'),
+  heroValue:document.getElementById('e_heroValue'),
+  rInstalled:document.getElementById('e_rInstalled'),
+  rEffective:document.getElementById('e_rEffective'),
+  rTotalEnergy:document.getElementById('e_rTotalEnergy'),
+  rActiveSockets:document.getElementById('e_rActiveSockets'),
+  rPowerPerSocket:document.getElementById('e_rPowerPerSocket'),
+  rMaxSockets:document.getElementById('e_rMaxSockets'),
+  chart:document.getElementById('e_chart'),
+  rEffectiveItem:document.getElementById('e_rEffectiveItem'),
+  resultsSection:document.getElementById('e_resultsSection'),
+  profileGrid:document.getElementById('e_profileGrid'),
+  profileDerived:document.getElementById('e_profileDerived'),
+  occSliderGroup:document.getElementById('e_occSliderGroup')
+};
+
+var pdfMode=false;
+var eHubFloor=1;
+var eTotalKwUser=null; // null = follow installed capacity
+
+function eParse(){
+  var outlets=parseInt(eE.outletSlider.value)||1;
+  var numHubs=Math.max(1,parseInt(eE.numHubs.value)||1);
+  var kwPerHub=Math.min(44,Math.max(1,parseFloat(eE.kwPerHub.value)||44));
+  var parking=Math.max(3,Math.min(24,parseFloat(eE.parkingSlider.value)||8));
+  var occ=parseInt(eE.occSlider.value)||100;
+  var installedKw=numHubs*kwPerHub;
+  var totalKwLimit=(eTotalKwUser!==null)?Math.min(installedKw,Math.max(1,eTotalKwUser)):installedKw;
+  var activeSockets=Math.max(1,Math.ceil(outlets*occ/100));
+  var maxSockets=numHubs*54;
+  return{outlets,numHubs,kwPerHub,parking,occ,installedKw,totalKwLimit,activeSockets,maxSockets};
+}
+
+function eCalc(d){
+  var effectiveKw=Math.min(d.installedKw,d.totalKwLimit);
+  var totalEnergy=effectiveKw*d.parking;
+  var energyPerSocket=totalEnergy/d.activeSockets;
+  var powerPerSocket=effectiveKw/d.activeSockets;
+  return{effectiveKw,totalEnergy,energyPerSocket,powerPerSocket};
+}
+
+function renderEnergy(){
+  var outlets=parseInt(eE.outletSlider.value)||1;
+  eE.outletVal.textContent=outlets;
+
+  var autoHubs=Math.ceil(outlets/54);
+  var newHubs=Math.max(autoHubs,eHubFloor);
+  eE.numHubs.value=newHubs;
+
+  var d=eParse();
+
+  // FIX 2: sync displayed totalKw if user value exceeds new installed
+  if(eTotalKwUser!==null&&eTotalKwUser>d.installedKw){
+    eTotalKwUser=d.installedKw;
+    eE.totalKw.value=d.installedKw;
+  }
+  // FIX 3: row is always visible; just keep value in sync when no user override
+  if(eTotalKwUser===null){eE.totalKw.value=d.installedKw;}
+
+  eE.parkingVal.textContent=d.parking;
+  eE.occVal.textContent=d.occ+'%';
+
+  var hasError=false;
+  if(d.outlets>d.maxSockets){
+    eE.globalError.textContent='Antal uttag ('+d.outlets+') överskrider max kapacitet ('+d.maxSockets+' uttag för '+d.numHubs+' SmartHubs).';
+    eE.globalError.classList.add('visible');hasError=true;
+  }else{eE.globalError.classList.remove('visible');}
+
+  var info=['Aktiva uttag: <span>'+d.activeSockets+'</span> av '+d.outlets];
+  if(d.numHubs>1)info.push('Uttag per hub (snitt): <span>'+(d.outlets/d.numHubs).toFixed(1)+'</span>');
+  eE.derivedInfo.innerHTML=info.join(' &nbsp;|&nbsp; ');
+  eE.derivedInfo.style.display='block';
+
+  if(hasError){eE.heroValue.textContent='—';eE.resultsSection.style.opacity='0.4';return;}
+  eE.resultsSection.style.opacity='1';
+
+  var r=eCalc(d);
+  eE.heroValue.textContent=r.energyPerSocket.toFixed(1);
+  eE.rInstalled.textContent=d.installedKw.toFixed(0)+' kW';
+  var eIsLimited=r.effectiveKw<d.installedKw;
+  eE.rEffectiveItem.style.display=eIsLimited?'':'none';
+  if(eIsLimited)eE.rEffective.textContent=r.effectiveKw.toFixed(0)+' kW';
+  eE.rTotalEnergy.textContent=r.totalEnergy.toFixed(0)+' kWh';
+  eE.rActiveSockets.textContent=d.activeSockets+' st';
+  eE.rPowerPerSocket.textContent=r.powerPerSocket.toFixed(2)+' kW';
+  eE.rMaxSockets.textContent=d.maxSockets+' st';
+
+  drawEnergyChart(d);
+  if(typeof updateCarRange==='function')updateCarRange('energy');
+}
+
+function drawEnergyChart(d){
+  var canvas=eE.chart,dpr=window.devicePixelRatio||1;
+  var rect=canvas.parentElement.getBoundingClientRect(),W=rect.width;
+  if(W===0)return; // FIX 5
+  var H=220;
+  canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';
+  var ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
+  var pad={top:30,right:20,bottom:32,left:48};
+  var cW=W-pad.left-pad.right,cH=H-pad.top-pad.bottom;
+  var tC=d.parking,tMin=Math.max(1,tC-10),tMax=tMin+20;
+  if(tMax>30){tMax=30;tMin=Math.max(1,tMax-20);}
+  var effKw=Math.min(d.installedKw,d.totalKwLimit),isLim=d.totalKwLimit<d.installedKw;
+  var pts=[],ptsF=[];
+  for(var t=tMin;t<=tMax;t+=0.5){
+    pts.push({t,kwh:(effKw*t)/d.activeSockets});
+    if(isLim)ptsF.push({t,kwh:(d.installedKw*t)/d.activeSockets});
+  }
+  var maxKwh=(isLim?ptsF[ptsF.length-1].kwh:pts[pts.length-1].kwh)||1;
+  var yMax=maxKwh*1.15;
+  var x=function(t){return pad.left+((t-tMin)/(tMax-tMin))*cW;};
+  var y=function(v){return pad.top+cH-(v/yMax)*cH;};
+  var gridCol=pdfMode?'rgba(0,0,0,0.10)':'rgba(255,255,255,0.06)';
+  var axisCol=pdfMode?'rgba(0,0,0,0.55)':'rgba(255,255,255,0.35)';
+  var legendCol=pdfMode?'rgba(0,0,0,0.6)':'rgba(255,255,255,0.5)';
+  var dotStroke=pdfMode?'#ffffff':'#1a1716';
+  var limConn=pdfMode?'rgba(88,160,139,0.6)':'rgba(88,160,139,0.4)';
+  if(pdfMode){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,W,H);}else{ctx.clearRect(0,0,W,H);}
+  ctx.strokeStyle=gridCol;ctx.lineWidth=1;
+  for(var i=0;i<=5;i++){var yV=(yMax/5)*i,yy=y(yV);ctx.beginPath();ctx.moveTo(pad.left,yy);ctx.lineTo(pad.left+cW,yy);ctx.stroke();ctx.fillStyle=axisCol;ctx.font='10px Arial';ctx.textAlign='right';ctx.fillText(yV.toFixed(0),pad.left-6,yy+3);}
+  ctx.fillStyle=axisCol;ctx.font='10px Arial';ctx.textAlign='center';
+  for(var t=Math.ceil(tMin);t<=tMax;t+=2)ctx.fillText(t+'h',x(t),H-pad.bottom+16);
+  if(isLim){
+    ctx.beginPath();for(var j=0;j<ptsF.length;j++){j===0?ctx.moveTo(x(ptsF[j].t),y(ptsF[j].kwh)):ctx.lineTo(x(ptsF[j].t),y(ptsF[j].kwh));}
+    ctx.lineTo(x(tMax),pad.top+cH);ctx.lineTo(x(tMin),pad.top+cH);ctx.closePath();
+    var gF=ctx.createLinearGradient(0,pad.top,0,pad.top+cH);gF.addColorStop(0,pdfMode?'rgba(88,160,139,0.15)':'rgba(88,160,139,0.08)');gF.addColorStop(1,'rgba(88,160,139,0)');ctx.fillStyle=gF;ctx.fill();
+    ctx.beginPath();ctx.strokeStyle='#58A08B';ctx.lineWidth=2;ctx.setLineDash([6,4]);
+    for(var j=0;j<ptsF.length;j++){j===0?ctx.moveTo(x(ptsF[j].t),y(ptsF[j].kwh)):ctx.lineTo(x(ptsF[j].t),y(ptsF[j].kwh));}
+    ctx.stroke();ctx.setLineDash([]);
+  }
+  ctx.beginPath();for(var j=0;j<pts.length;j++){j===0?ctx.moveTo(x(pts[j].t),y(pts[j].kwh)):ctx.lineTo(x(pts[j].t),y(pts[j].kwh));}
+  ctx.lineTo(x(tMax),pad.top+cH);ctx.lineTo(x(tMin),pad.top+cH);ctx.closePath();
+  var g=ctx.createLinearGradient(0,pad.top,0,pad.top+cH);g.addColorStop(0,pdfMode?'rgba(244,96,54,0.25)':'rgba(244,96,54,0.18)');g.addColorStop(1,'rgba(244,96,54,0)');ctx.fillStyle=g;ctx.fill();
+  ctx.beginPath();ctx.strokeStyle='#F46036';ctx.lineWidth=2.5;
+  for(var j=0;j<pts.length;j++){j===0?ctx.moveTo(x(pts[j].t),y(pts[j].kwh)):ctx.lineTo(x(pts[j].t),y(pts[j].kwh));}
+  ctx.stroke();
+  var curKwh=(effKw*d.parking)/d.activeSockets,cx=x(d.parking),cy=y(curKwh);
+  ctx.beginPath();ctx.arc(cx,cy,5,0,Math.PI*2);ctx.fillStyle='#F46036';ctx.fill();ctx.strokeStyle=dotStroke;ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#F46036';ctx.font='bold 11px Arial';ctx.textAlign='center';var lY=cy-14;ctx.fillText(curKwh.toFixed(1)+' kWh',cx,lY);
+  if(isLim){
+    var fKwh=(d.installedKw*d.parking)/d.activeSockets,fCy=y(fKwh);
+    ctx.beginPath();ctx.strokeStyle=limConn;ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.moveTo(cx,cy-7);ctx.lineTo(cx,fCy+7);ctx.stroke();ctx.setLineDash([]);
+    ctx.beginPath();ctx.arc(cx,fCy,4,0,Math.PI*2);ctx.fillStyle='#58A08B';ctx.fill();
+    ctx.fillStyle='#58A08B';ctx.font='bold 10px Arial';var flY=fCy-12;if(Math.abs(flY-lY)<16)flY=fCy-18;ctx.fillText(fKwh.toFixed(1)+' kWh (full)',cx,flY);
+  }
+  var lx=pad.left+6,ly=pad.top+10;ctx.font='10px Arial';ctx.strokeStyle='#F46036';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(lx,ly);ctx.lineTo(lx+18,ly);ctx.stroke();ctx.fillStyle=legendCol;ctx.textAlign='left';ctx.fillText('Aktuell',lx+22,ly+3);
+  if(isLim){ly+=14;ctx.strokeStyle='#58A08B';ctx.lineWidth=2;ctx.setLineDash([4,3]);ctx.beginPath();ctx.moveTo(lx,ly);ctx.lineTo(lx+18,ly);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=legendCol;ctx.fillText('Full kapacitet',lx+22,ly+3);}
+}
+
+// FIX 1: 'input' event (was 'change') — live updates
+// FIX 4: eHubFloor resets if user sets value below autoHubs
+eE.numHubs.addEventListener('input',function(){
+  var autoHubs=Math.ceil((parseInt(eE.outletSlider.value)||1)/54);
+  var v=Math.max(1,parseInt(this.value)||1);
+  eHubFloor=(v<autoHubs)?autoHubs:v; // FIX 4
+  this.value=v;
+  var newInst=v*(parseFloat(eE.kwPerHub.value)||44);
+  if(eTotalKwUser===null){eE.totalKw.value=newInst;}
+  else if(eTotalKwUser>newInst){eTotalKwUser=newInst;eE.totalKw.value=newInst;}
+  renderEnergy();
+});
+
+eE.totalKw.addEventListener('input',function(){
+  var raw=this.value.trim();
+  if(raw===''){ eTotalKwUser=null; }
+  else{ var v=parseFloat(raw); if(!isNaN(v)&&v>0){ eTotalKwUser=v; }else if(!isNaN(v)&&v===0){ eTotalKwUser=null; } }
+  renderEnergy();
+});
+eE.kwPerHub.addEventListener('input',function(){
+  var d=eParse();
+  if(eTotalKwUser===null)eE.totalKw.value=d.numHubs*(parseFloat(this.value)||44);
+  renderEnergy();
+});
+[eE.outletSlider,eE.parkingSlider,eE.occSlider].forEach(function(el){el.addEventListener('input',renderEnergy);});
+
+// ── Occupancy profiles ──
+var profileOcc={kontor:85,kopcenter:70,bostad:60};
+var profileLabels={kontor:'kontorsprofil',kopcenter:'köpcentrumprofil',bostad:'bostadsprofil'};
+var activeProfile='kontor';
+
+function setProfile(key){
+  activeProfile=key;
+  eE.profileGrid.querySelectorAll('.profile-card').forEach(function(c){c.classList.toggle('active',c.dataset.profile===key);});
+  if(key==='custom'){
+    eE.occSliderGroup.style.display='';
+    eE.profileDerived.style.display='none';
+  }else{
+    eE.occSlider.value=profileOcc[key];
+    eE.occSliderGroup.style.display='none';
+    eE.profileDerived.innerHTML='Viktat snitt: <span>'+profileOcc[key]+'%</span> beläggning \u00b7 baserat p\u00e5 '+profileLabels[key];
+    eE.profileDerived.style.display='block';
+  }
+  renderEnergy();
+}
+eE.profileGrid.addEventListener('click',function(e){
+  var card=e.target.closest('.profile-card');
+  if(!card)return;
+  setProfile(card.dataset.profile);
+});
+
+window.copyEnergyResults=function(){
+  var d=eParse(),r=eCalc(d);
+  var profSuffix=activeProfile!=='custom'?' ('+profileLabels[activeProfile]+')':'';
+  copyToClipboard(['Amp5 Laddkalkylator – Energi per uttag','─────────────────────────',
+    'Antal uttag: '+d.outlets,'SmartHubs: '+d.numHubs,'Kapacitet/hub: '+d.kwPerHub+' kW',
+    'Installerad kapacitet: '+d.installedKw+' kW','Effektiv kapacitet: '+r.effectiveKw.toFixed(0)+' kW',
+    'Parkeringstid: '+d.parking+' h','Beläggningsgrad: '+d.occ+'%'+profSuffix,'Aktiva uttag: '+d.activeSockets,'',
+    '★ Energi per uttag: '+r.energyPerSocket.toFixed(1)+' kWh',
+    'Total energi: '+r.totalEnergy.toFixed(0)+' kWh',
+    'Snitteffekt/uttag: '+r.powerPerSocket.toFixed(2)+' kW'].join('\n'),document.getElementById('e_copyBtn'));
+};
+window.resetEnergy=function(){
+  eE.outletSlider.value=20;eE.numHubs.value=1;eE.kwPerHub.value=44;
+  eE.totalKw.value=44;eE.parkingSlider.value=8;
+  eHubFloor=1;eTotalKwUser=null;
+  setProfile('kontor');
+};
+
+// ── TAB 2: HUBS ────────────────────────────────────────
+var hE={
+  outletSlider:document.getElementById('h_outletSlider'),outletVal:document.getElementById('h_outletVal'),
+  targetKwh:document.getElementById('h_targetKwh'),parkingTime:document.getElementById('h_parkingTime'),
+  occSlider:document.getElementById('h_occSlider'),occVal:document.getElementById('h_occVal'),
+  kwPerHub:document.getElementById('h_kwPerHub'),globalError:document.getElementById('h_globalError'),
+  heroValue:document.getElementById('h_heroValue'),rRequiredKw:document.getElementById('h_rRequiredKw'),
+  rInstalledKw:document.getElementById('h_rInstalledKw'),rActiveSockets:document.getElementById('h_rActiveSockets'),
+  rActualKwh:document.getElementById('h_rActualKwh'),rHubsBySlots:document.getElementById('h_rHubsBySlots'),
+  rHubsByPower:document.getElementById('h_rHubsByPower'),chart:document.getElementById('h_chart'),
+  totalKw:document.getElementById('h_totalKw'),derivedInfo:document.getElementById('h_derivedInfo'),
+  rEffectiveItem:document.getElementById('h_rEffectiveItem'),rEffectiveKw:document.getElementById('h_rEffectiveKw'),
+  resultsSection:document.getElementById('h_resultsSection'),infoBox:document.getElementById('h_infoBox')
+};
+
+function hParse(){
+  var outlets=parseInt(hE.outletSlider.value)||1;
+  var targetKwh=Math.max(0.5,parseFloat(hE.targetKwh.value)||15);
+  var parkingTime=Math.max(3,Math.min(24,parseFloat(hE.parkingTime.value)||8));
+  var occ=parseInt(hE.occSlider.value)||100;
+  var kwPerHub=Math.min(44,Math.max(1,parseFloat(hE.kwPerHub.value)||44));
+  var activeSockets=Math.max(1,Math.ceil(outlets*occ/100));
+  var raw=parseFloat(hE.totalKw.value);
+  var totalKwLimit=(isNaN(raw)||raw<=0)?null:raw;
+  return{outlets,targetKwh,parkingTime,occ,kwPerHub,maxOutletsPerHub:54,activeSockets,totalKwLimit};
+}
+
+function hCalc(d){
+  var requiredKw=(d.targetKwh*d.activeSockets)/d.parkingTime;
+  var hubsByPower=Math.ceil(requiredKw/d.kwPerHub);
+  var hubsBySlots=Math.ceil(d.outlets/d.maxOutletsPerHub);
+  var totalHubs=Math.max(hubsByPower,hubsBySlots);
+  var installedKw=totalHubs*d.kwPerHub;
+  var effectiveKw=installedKw,isLimited=false;
+  if(d.totalKwLimit!==null&&d.totalKwLimit<installedKw){effectiveKw=d.totalKwLimit;isLimited=true;}
+  var actualKwhPerSocket=(effectiveKw*d.parkingTime)/d.activeSockets;
+  return{requiredKw,hubsByPower,hubsBySlots,totalHubs,installedKw,effectiveKw,isLimited,actualKwhPerSocket,actualMeetsTarget:actualKwhPerSocket>=d.targetKwh-0.05};
+}
+
+function renderHubs(){
+  hE.outletVal.textContent=parseInt(hE.outletSlider.value)||1;
+  hE.occVal.textContent=(parseInt(hE.occSlider.value)||100)+'%';
+  var d=hParse(),r=hCalc(d);
+  var rawTarget=parseFloat(hE.targetKwh.value),rawParking=parseFloat(hE.parkingTime.value),rawKwHub=parseFloat(hE.kwPerHub.value);
+  var hError='';
+  if(isNaN(rawTarget)||rawTarget<0.5)hError='Önskad energi per uttag måste vara minst 0.5 kWh.';
+  else if(isNaN(rawParking)||rawParking<3)hError='Parkeringstiden måste vara minst 3 timmar.';
+  else if(isNaN(rawKwHub)||rawKwHub<1)hError='Kapacitet per SmartHub måste vara minst 1 kW.';
+  if(hError){hE.globalError.textContent=hError;hE.globalError.classList.add('visible');hE.heroValue.textContent='—';hE.resultsSection.style.opacity='0.4';return;}
+  hE.globalError.classList.remove('visible');hE.resultsSection.style.opacity='1';
+  hE.heroValue.textContent=r.totalHubs;
+  hE.rRequiredKw.textContent=r.requiredKw.toFixed(1)+' kW';
+  hE.rInstalledKw.textContent=r.installedKw.toFixed(0)+' kW';
+  hE.rActiveSockets.textContent=d.activeSockets+' st';
+  hE.rActualKwh.textContent=r.actualKwhPerSocket.toFixed(1)+' kWh';
+  hE.rHubsBySlots.textContent=r.hubsBySlots+' st';
+  hE.rHubsByPower.textContent=r.hubsByPower+' st';
+  hE.rEffectiveItem.style.display=r.isLimited?'':'none';
+  if(r.isLimited)hE.rEffectiveKw.textContent=r.effectiveKw.toFixed(0)+' kW';
+  if(r.isLimited){hE.derivedInfo.innerHTML='Effektiv kapacitet: <span>'+r.effectiveKw.toFixed(0)+' kW</span> (begränsad)';hE.derivedInfo.style.display='block';}else{hE.derivedInfo.style.display='none';}
+  if(r.isLimited&&!r.actualMeetsTarget){hE.infoBox.innerHTML='<strong style="color:var(--warning)">Systemeffekten ('+r.effectiveKw.toFixed(0)+' kW) räcker inte</strong> för '+d.targetKwh+' kWh/uttag. Faktisk: <strong>'+r.actualKwhPerSocket.toFixed(1)+' kWh/uttag</strong>.';}
+  else if(r.hubsByPower>r.hubsBySlots){hE.infoBox.innerHTML='Effektbehovet ('+r.requiredKw.toFixed(1)+' kW) är dimensionerande. Du behöver <strong>'+r.totalHubs+' SmartHub(s)</strong>.';}
+  else if(r.hubsBySlots>r.hubsByPower){hE.infoBox.innerHTML='Antalet uttag ('+d.outlets+' st, max 54/hub) är dimensionerande. Effektmässigt hade '+r.hubsByPower+' hub(s) räckt.';}
+  else{hE.infoBox.innerHTML='Båda faktorer kräver <strong>'+r.totalHubs+'</strong> SmartHub(s).';}
+  drawHubChart(d);
+  if(typeof updateCarRange==='function')updateCarRange('hubs');
+}
+
+function drawHubChart(d){
+  var canvas=hE.chart,dpr=window.devicePixelRatio||1;
+  var rect=canvas.parentElement.getBoundingClientRect(),W=rect.width;
+  if(W===0)return; // FIX 5
+  var H=220;
+  canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';
+  var ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
+  var pad={top:30,right:20,bottom:32,left:48},cW=W-pad.left-pad.right,cH=H-pad.top-pad.bottom;
+  var kMin=1,kMax=60,pts=[],maxH=0;
+  for(var k=kMin;k<=kMax;k+=0.5){var rK=(k*d.activeSockets)/d.parkingTime;var h=Math.max(Math.ceil(rK/d.kwPerHub),Math.ceil(d.outlets/d.maxOutletsPerHub));pts.push({kwh:k,hubs:h});if(h>maxH)maxH=h;}
+  var yMax=Math.max(maxH+1,3);
+  var x=function(v){return pad.left+((v-kMin)/(kMax-kMin))*cW;};
+  var y=function(v){return pad.top+cH-(v/yMax)*cH;};
+  var gridCol=pdfMode?'rgba(0,0,0,0.10)':'rgba(255,255,255,0.06)';
+  var axisCol=pdfMode?'rgba(0,0,0,0.55)':'rgba(255,255,255,0.35)';
+  var legendCol=pdfMode?'rgba(0,0,0,0.6)':'rgba(255,255,255,0.5)';
+  var dotStroke=pdfMode?'#ffffff':'#1a1716';
+  if(pdfMode){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,W,H);}else{ctx.clearRect(0,0,W,H);}
+  ctx.strokeStyle=gridCol;ctx.lineWidth=1;
+  for(var i=0;i<=yMax;i++){var yy=y(i);ctx.beginPath();ctx.moveTo(pad.left,yy);ctx.lineTo(pad.left+cW,yy);ctx.stroke();ctx.fillStyle=axisCol;ctx.font='10px Arial';ctx.textAlign='right';ctx.fillText(i,pad.left-6,yy+3);}
+  ctx.fillStyle=axisCol;ctx.font='10px Arial';ctx.textAlign='center';
+  for(var k=5;k<=kMax;k+=5)ctx.fillText(k+' kWh',x(k),H-pad.bottom+16);
+  ctx.beginPath();ctx.strokeStyle='#F46036';ctx.lineWidth=2.5;
+  for(var j=0;j<pts.length;j++){var px=x(pts[j].kwh),py=y(pts[j].hubs);if(j===0){ctx.moveTo(px,py);}else{ctx.lineTo(px,y(pts[j-1].hubs));ctx.lineTo(px,py);}}
+  ctx.stroke();
+  ctx.beginPath();
+  for(var j=0;j<pts.length;j++){var px=x(pts[j].kwh),py=y(pts[j].hubs);if(j===0){ctx.moveTo(px,py);}else{ctx.lineTo(px,y(pts[j-1].hubs));ctx.lineTo(px,py);}}
+  ctx.lineTo(x(kMax),pad.top+cH);ctx.lineTo(x(kMin),pad.top+cH);ctx.closePath();
+  var g=ctx.createLinearGradient(0,pad.top,0,pad.top+cH);g.addColorStop(0,pdfMode?'rgba(244,96,54,0.25)':'rgba(244,96,54,0.15)');g.addColorStop(1,'rgba(244,96,54,0)');ctx.fillStyle=g;ctx.fill();
+  var sf=Math.ceil(d.outlets/d.maxOutletsPerHub);
+  ctx.beginPath();ctx.strokeStyle='#58A08B';ctx.lineWidth=1.5;ctx.setLineDash([5,4]);ctx.moveTo(pad.left,y(sf));ctx.lineTo(pad.left+cW,y(sf));ctx.stroke();ctx.setLineDash([]);
+  var r=hCalc(d),cx=x(d.targetKwh),cy=y(r.totalHubs);
+  if(d.targetKwh>=kMin&&d.targetKwh<=kMax){ctx.beginPath();ctx.arc(cx,cy,5,0,Math.PI*2);ctx.fillStyle='#F46036';ctx.fill();ctx.strokeStyle=dotStroke;ctx.lineWidth=2;ctx.stroke();ctx.fillStyle='#F46036';ctx.font='bold 11px Arial';ctx.textAlign='center';ctx.fillText(r.totalHubs+' hubs',cx,cy-14);}
+  var lx=pad.left+6,ly=pad.top+10;ctx.font='10px Arial';ctx.strokeStyle='#F46036';ctx.lineWidth=2;ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(lx,ly);ctx.lineTo(lx+18,ly);ctx.stroke();ctx.fillStyle=legendCol;ctx.textAlign='left';ctx.fillText('SmartHubs (totalt)',lx+22,ly+3);
+  ly+=14;ctx.strokeStyle='#58A08B';ctx.lineWidth=1.5;ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(lx,ly);ctx.lineTo(lx+18,ly);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=legendCol;ctx.fillText('Min hubs (uttag)',lx+22,ly+3);
+}
+
+[hE.outletSlider,hE.occSlider].forEach(function(el){el.addEventListener('input',renderHubs);});
+[hE.targetKwh,hE.parkingTime,hE.kwPerHub,hE.totalKw].forEach(function(el){el.addEventListener('input',renderHubs);});
+
+window.copyHubResults=function(){
+  var d=hParse(),r=hCalc(d);
+  copyToClipboard(['Amp5 Laddkalkylator – SmartHub-dimensionering','─────────────────────────',
+    'Antal platser: '+d.outlets,'Önskad energi/uttag: '+d.targetKwh+' kWh','Parkeringstid: '+d.parkingTime+' h',
+    'Beläggningsgrad: '+d.occ+'%','Kapacitet/hub: '+d.kwPerHub+' kW',
+    d.totalKwLimit?'Systemeffekt (tak): '+d.totalKwLimit+' kW':'Systemeffekt: obegränsad','',
+    '★ SmartHubs som krävs: '+r.totalHubs,'Kräver minst: '+r.requiredKw.toFixed(1)+' kW',
+    'Installerad kapacitet: '+r.installedKw+' kW','Faktisk energi/uttag: '+r.actualKwhPerSocket.toFixed(1)+' kWh',
+    'Hubs pga uttag: '+r.hubsBySlots,'Hubs pga effekt: '+r.hubsByPower].join('\n'),document.getElementById('h_copyBtn'));
+};
+window.resetHubs=function(){hE.outletSlider.value=40;hE.targetKwh.value=15;hE.parkingTime.value=8;hE.occSlider.value=100;hE.kwPerHub.value=44;hE.totalKw.value='';renderHubs();};
+
+// ── TAB 3: COMPARE ─────────────────────────────────────
+var cGrid=document.getElementById('c_grid');
+var scenarios=[
+  {name:'Scenario A',outlets:20,parking:8,occ:100,kwPerHub:44,numHubs:'',totalKw:''},
+  {name:'Scenario B',outlets:40,parking:10,occ:70,kwPerHub:44,numHubs:'',totalKw:''}
+];
+var scenarioNames=['Scenario A','Scenario B','Scenario C','Scenario D','Scenario E','Scenario F'];
+var scenarioColors=['#F46036','#58A08B','#F5A888','#7BAFD4','#D4A574','#A8D4A0'];
+
+function cCalc(s){
+  var outlets=Math.max(1,parseInt(s.outlets)||1);
+  var parking=Math.max(1,parseFloat(s.parking)||8);
+  var occ=Math.max(10,Math.min(100,parseInt(s.occ)||100));
+  var kwPerHub=Math.min(44,Math.max(1,parseFloat(s.kwPerHub)||44));
+  var activeSockets=Math.max(1,Math.ceil(outlets*occ/100));
+  var autoHubs=Math.ceil(outlets/54);
+  var man=parseInt(s.numHubs);
+  var numHubs=(isNaN(man)||man<1)?autoHubs:Math.max(autoHubs,man);
+  var installedKw=numHubs*kwPerHub;
+  var raw=parseFloat(s.totalKw),limit=(isNaN(raw)||raw<=0)?null:raw;
+  var effectiveKw=installedKw,isLimited=false;
+  if(limit!==null&&limit<installedKw){effectiveKw=limit;isLimited=true;}
+  var totalEnergy=effectiveKw*parking;
+  var energyPerSocket=totalEnergy/activeSockets;
+  return{outlets,parking,occ,kwPerHub,activeSockets,numHubs,installedKw,effectiveKw,isLimited,totalEnergy,energyPerSocket,powerPerSocket:effectiveKw/activeSockets};
+}
+
+function buildCompareCards(){
+  cGrid.innerHTML='';
+  scenarios.forEach(function(s,i){
+    var card=document.createElement('div');card.className='scenario-card';card.dataset.idx=i;
+    card.innerHTML=(scenarios.length>1?'<button class="remove-scenario-btn" onclick="removeScenario('+i+')" title="Ta bort">&times;</button>':'')+
+      '<div class="card-label">'+escapeHtml(s.name)+'</div>'+
+      '<div class="card-field"><label>Uttag</label><input type="text" inputmode="numeric" value="'+escapeHtml(s.outlets)+'" data-i="'+i+'" data-key="outlets"></div>'+
+      '<div class="card-field"><label>SmartHubs</label><input type="text" inputmode="numeric" placeholder="Auto" value="'+escapeHtml(s.numHubs||'')+'" data-i="'+i+'" data-key="numHubs"></div>'+
+      '<div class="card-field"><label>Parkeringstid (h)</label><input type="text" inputmode="decimal" value="'+escapeHtml(s.parking)+'" data-i="'+i+'" data-key="parking"></div>'+
+      '<div class="card-field"><label>Beläggningsgrad (%)</label><input type="text" inputmode="numeric" value="'+escapeHtml(s.occ)+'" data-i="'+i+'" data-key="occ"></div>'+
+      '<div class="card-field"><label>kW/SmartHub</label><input type="text" inputmode="numeric" value="'+escapeHtml(s.kwPerHub)+'" data-i="'+i+'" data-key="kwPerHub"></div>'+
+      '<div class="card-field"><label>Systemeffekt-tak (kW)</label><input type="text" inputmode="numeric" placeholder="Obegränsad" value="'+escapeHtml(s.totalKw||'')+'" data-i="'+i+'" data-key="totalKw"></div>'+
+      '<div class="card-results" data-results="'+i+'"></div>';
+    cGrid.appendChild(card);
+  });
+  cGrid.querySelectorAll('input').forEach(function(inp){
+    inp.addEventListener('input',function(){scenarios[parseInt(this.dataset.i)][this.dataset.key]=this.value;updateCompareResults();});
+  });
+  document.getElementById('c_addBtn').style.display=scenarios.length>=6?'none':'';
+  updateCompareResults();
+}
+
+function updateCompareResults(){
+  var results=scenarios.map(cCalc);
+  var maxKwh=results.reduce(function(m,r){return Math.max(m,r.energyPerSocket);},0)||1;
+  var car=carModels[selectedCarIdx]||carModels[0];
+  results.forEach(function(r,i){
+    var cont=cGrid.querySelector('[data-results="'+i+'"]');if(!cont)return;
+    var col=scenarioColors[i]||'#888';
+    var rangeKm=Math.round((r.energyPerSocket/car.kwh100)*100);
+    var co2=calcCO2(r.energyPerSocket,car);
+    cont.innerHTML='<div class="card-hero"><div class="val" style="color:'+col+'">'+r.energyPerSocket.toFixed(1)+'</div><div class="unit">kWh / uttag</div></div>'+
+      '<div class="kwh-bar-wrap"><div class="kwh-bar" style="width:'+Math.round((r.energyPerSocket/maxKwh)*100)+'%;background:'+col+'"></div></div>'+
+      '<div class="card-stat"><span class="stat-label">⚡ '+car.name+'</span><span class="stat-val" style="color:'+col+'">'+rangeKm+' km</span></div>'+
+      '<div class="card-stat"><span class="stat-label">🌱 CO2 sparat</span><span class="stat-val" style="color:var(--green)">'+co2.label+'</span></div>'+
+      '<div class="card-stat"><span class="stat-label">SmartHubs</span><span class="stat-val">'+r.numHubs+'</span></div>'+
+      '<div class="card-stat"><span class="stat-label">Aktiva uttag</span><span class="stat-val">'+r.activeSockets+'</span></div>'+
+      '<div class="card-stat"><span class="stat-label">Installerad kW</span><span class="stat-val">'+r.installedKw+'</span></div>'+
+      (r.isLimited?'<div class="card-stat"><span class="stat-label">Effektiv kW</span><span class="stat-val" style="color:var(--warning)">'+r.effectiveKw.toFixed(0)+'</span></div>':'')+
+      '<div class="card-stat"><span class="stat-label">Total energi</span><span class="stat-val">'+r.totalEnergy.toFixed(0)+' kWh</span></div>'+
+      '<div class="card-stat"><span class="stat-label">kW/uttag</span><span class="stat-val">'+r.powerPerSocket.toFixed(2)+'</span></div>';
+  });
+  drawCompareChart();
+}
+
+function renderCompare(){buildCompareCards();}
+
+window.addScenario=function(){
+  if(scenarios.length>=6)return;
+  scenarios.push({name:scenarioNames[scenarios.length],outlets:30,parking:8,occ:80,kwPerHub:44,numHubs:'',totalKw:''});
+  renderCompare();
+};
+window.removeScenario=function(idx){
+  if(scenarios.length<=1)return;
+  scenarios.splice(idx,1);
+  scenarios.forEach(function(s,i){s.name=scenarioNames[i];});
+  renderCompare();
+};
+window.copyCompareResults=function(){
+  var lines=['Amp5 Laddkalkylator – Scenariojämförelse','─────────────────────────'];
+  scenarios.forEach(function(s,i){var r=cCalc(s);lines.push('',s.name.toUpperCase(),'Uttag: '+r.outlets+' | Parkering: '+r.parking+'h | Beläggning: '+r.occ+'%','SmartHubs: '+r.numHubs+' | Installerad: '+r.installedKw+' kW',(r.isLimited?'Effektiv: '+r.effectiveKw.toFixed(0)+' kW (begränsad)':''),'★ Energi/uttag: '+r.energyPerSocket.toFixed(1)+' kWh');});
+  copyToClipboard(lines.join('\n'),document.getElementById('c_copyBtn'));
+};
+window.resetCompare=function(){scenarios=[{name:'Scenario A',outlets:20,parking:8,occ:100,kwPerHub:44,numHubs:'',totalKw:''},{name:'Scenario B',outlets:40,parking:10,occ:70,kwPerHub:44,numHubs:'',totalKw:''}];renderCompare();};
+
+function drawCompareChart(){
+  var canvas=document.getElementById('c_chart');if(!canvas)return;
+  var dpr=window.devicePixelRatio||1;
+  var rect=canvas.parentElement.getBoundingClientRect(),W=rect.width;
+  if(W===0)return; // FIX 5
+  var H=280;
+  canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';
+  var ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
+  var results=scenarios.map(cCalc),n=results.length;
+  var metrics=[{key:'energyPerSocket',label:'kWh/uttag',dec:1},{key:'numHubs',label:'SmartHubs',dec:0},{key:'installedKw',label:'Inst. kW',dec:0},{key:'activeSockets',label:'Aktiva uttag',dec:0}];
+  var mCount=metrics.length,pad={top:22,right:12,bottom:52,left:12},cW=W-pad.left-pad.right,cH=H-pad.top-pad.bottom;
+  var axisCol=pdfMode?'rgba(0,0,0,0.55)':'rgba(255,255,255,0.4)';
+  var baseCol=pdfMode?'rgba(0,0,0,0.10)':'rgba(255,255,255,0.08)';
+  var legendCol=pdfMode?'rgba(0,0,0,0.6)':'rgba(255,255,255,0.5)';
+  if(pdfMode){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,W,H);}else{ctx.clearRect(0,0,W,H);}
+  var groupGap=Math.max(16,cW*0.04),totalGroupW=(cW-(mCount-1)*groupGap)/mCount;
+  var barGap=2,barWidth=Math.max(6,Math.min(28,(totalGroupW-(n-1)*barGap)/n));
+  var actualGroupW=n*barWidth+(n-1)*barGap;
+  for(var m=0;m<mCount;m++){
+    var metric=metrics[m],maxVal=results.reduce(function(a,r){return Math.max(a,r[metric.key]);},0)||1;
+    var gx=pad.left+m*(totalGroupW+groupGap)+(totalGroupW-actualGroupW)/2,gc=gx+actualGroupW/2;
+    ctx.fillStyle=axisCol;ctx.font='10px Arial';ctx.textAlign='center';ctx.fillText(metric.label,gc,H-pad.bottom+30);
+    ctx.strokeStyle=baseCol;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(gx-4,pad.top+cH);ctx.lineTo(gx+actualGroupW+4,pad.top+cH);ctx.stroke();
+    for(var s=0;s<n;s++){
+      var val=results[s][metric.key],bH=Math.max(2,(val/maxVal)*(cH-16));
+      var bx=gx+s*(barWidth+barGap),by=pad.top+cH-bH,col=scenarioColors[s]||'#888';
+      var rad=Math.min(3,barWidth/2);
+      ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(bx,by+rad);ctx.arcTo(bx,by,bx+rad,by,rad);ctx.arcTo(bx+barWidth,by,bx+barWidth,by+rad,rad);ctx.lineTo(bx+barWidth,pad.top+cH);ctx.lineTo(bx,pad.top+cH);ctx.closePath();ctx.fill();
+      ctx.fillStyle=col;ctx.font='bold 9px Arial';ctx.textAlign='center';
+      ctx.fillText(metric.dec>0?val.toFixed(metric.dec):Math.round(val).toString(),bx+barWidth/2,by-4);
+    }
+  }
+  ctx.font='10px Arial';var legTW=0;
+  for(var s=0;s<n;s++)legTW+=12+ctx.measureText(scenarios[s].name).width+(s<n-1?12:0);
+  var lx=Math.max(pad.left,(W-legTW)/2),ly=H-8;
+  for(var s=0;s<n;s++){ctx.fillStyle=scenarioColors[s]||'#888';ctx.beginPath();ctx.arc(lx+4,ly-3,4,0,Math.PI*2);ctx.fill();lx+=12;ctx.fillStyle=legendCol;ctx.textAlign='left';ctx.fillText(scenarios[s].name,lx,ly);lx+=ctx.measureText(scenarios[s].name).width+12;}
+}
+
+// ── CAR MODELS ─────────────────────────────────────────
+var GRID_CO2_G_PER_KWH=41;
+var PETROL_CO2_G_PER_KM=120;
+
+function calcCO2(kwhPerSocket,car){
+  var rangeKm=(kwhPerSocket/car.kwh100)*100;
+  var evCO2=rangeKm*GRID_CO2_G_PER_KWH*(car.kwh100/100);
+  var petrolCO2=rangeKm*PETROL_CO2_G_PER_KM;
+  var saved=Math.max(0,petrolCO2-evCO2);
+  return{savedG:saved,label:saved>=1000?(saved/1000).toFixed(1)+' kg CO2':Math.round(saved)+' g CO2'};
+}
+
+var carModels=[
+  {name:'Volvo EX30',kwh100:16.0},{name:'Volvo EX40',kwh100:18.5},
+  {name:'Tesla Model 3 RWD',kwh100:13.5},{name:'Tesla Model Y RWD',kwh100:15.8},
+  {name:'VW ID.7 Pro',kwh100:16.2},{name:'VW ID.4 Pro',kwh100:17.5},{name:'VW ID.3 Pro',kwh100:16.2},
+  {name:'Kia EV3 Long Range',kwh100:15.5},{name:'Kia EV6 RWD',kwh100:17.6},
+  {name:'Polestar 2 SM',kwh100:17.0},{name:'Skoda Enyaq 60',kwh100:15.9},
+  {name:'BMW iX1 eDrive20',kwh100:16.1},{name:'Hyundai Kona EV',kwh100:15.0},
+  {name:'Cupra Born',kwh100:16.0},{name:'MG4 Extended Range',kwh100:16.5}
+];
+var selectedCarIdx=0;
+
+function populateCarSelects(){
+  ['e_carSelect','h_carSelect'].forEach(function(id){
+    var sel=document.getElementById(id);if(!sel)return;sel.innerHTML='';
+    carModels.forEach(function(car,idx){var o=document.createElement('option');o.value=idx;o.textContent=car.name+' ('+car.kwh100.toFixed(1)+' kWh/100km)';sel.appendChild(o);});
+  });
+}
+
+window.updateCarRange=function(tab){
+  var sel,disp,kwh;
+  if(tab==='energy'){sel=document.getElementById('e_carSelect');disp=document.getElementById('e_carRange');var d=eParse();kwh=eCalc(d).energyPerSocket;}
+  else{sel=document.getElementById('h_carSelect');disp=document.getElementById('h_carRange');var d=hParse();kwh=hCalc(d).actualKwhPerSocket;}
+  if(!sel||!disp)return;
+  sel.value=selectedCarIdx;
+  var car=carModels[selectedCarIdx];if(!car)return;
+  var km=(kwh/car.kwh100)*100,pct=Math.min(100,Math.round((km/40)*100)),ok=km>=40;
+  var co2=calcCO2(kwh,car);
+  disp.innerHTML='<div class="car-range-icon">'+(ok?'⚡':'⚠️')+'</div>'+
+    '<div class="car-range-text"><div class="range-km">'+Math.round(km)+' km</div><div class="range-label">räckvidd med '+car.name+'</div>'+
+    '<div style="margin-top:.5rem;display:flex;align-items:center;gap:.4rem"><span style="font-size:1.1rem;line-height:1">🌱</span><span style="font-size:1.1rem;font-weight:700;color:var(--green)">'+co2.label+' sparat</span></div>'+
+    '<div style="font-size:.72rem;color:var(--text-muted)">jämfört med bensinbil ('+PETROL_CO2_G_PER_KM+' g/km)</div></div>'+
+    '<div class="car-range-bar"><div class="car-range-bar-track"><div class="car-range-bar-fill" style="width:'+pct+'%;background:'+(ok?'var(--green)':'var(--warning)')+'"></div></div>'+
+    '<div class="car-range-bar-label">'+(ok?'Täcker snittpendeldag (40 km)':'Under snittpendeldag (40 km)')+'</div></div>';
+};
+
+window.onCarSelectChange=function(el){
+  var idx=parseInt(el.value)||0;
+  selectedCarIdx=Math.max(0,Math.min(idx,carModels.length-1));
+  ['e_carSelect','h_carSelect'].forEach(function(id){var e=document.getElementById(id);if(e)e.value=selectedCarIdx;});
+  updateCarRange('energy');updateCarRange('hubs');updateCompareResults();
+};
+
+// ── UTILS ───────────────────────────────────────────────
+function copyToClipboard(txt,btn){
+  function onSuccess(){btn.classList.add('is-copied');setTimeout(function(){btn.classList.remove('is-copied');},1800);}
+  function onFail(){alert('Kunde inte kopiera till urklipp.');}
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(onSuccess).catch(function(){
+      try{fallbackCopy(txt);onSuccess();}catch(e){onFail();}
+    });
+  }else{
+    try{fallbackCopy(txt);onSuccess();}catch(e){onFail();}
+  }
+}
+function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function fallbackCopy(txt){var ta=document.createElement('textarea');ta.value=txt;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();var ok=document.execCommand('copy');document.body.removeChild(ta);if(!ok)throw new Error('execCommand failed');}
+
+window.addEventListener('resize',function(){
+  var a=document.querySelector('.tab-btn.active');if(!a)return;
+  if(a.dataset.tab==='energy')renderEnergy();
+  else if(a.dataset.tab==='hubs')renderHubs();
+  else if(a.dataset.tab==='compare')drawCompareChart();
+});
+
+// ── PDF EXPORT ──────────────────────────────────────────
+function buildPDF(title,sections,canvasEl,redrawFn,filename){
+  if(!window.jspdf||!window.jspdf.jsPDF){alert('PDF-biblioteket kunde inte laddas. Kontrollera din internetanslutning och ladda om sidan.');return;}
+  var jsPDF=window.jspdf.jsPDF;
+  var doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  var W=doc.internal.pageSize.getWidth(),margin=16,y=18,maxW=W-margin*2;
+  var today=new Date();var dateStr=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');
+
+  // Header
+  doc.setFillColor(39,33,32);doc.rect(0,0,W,38,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(16);doc.setTextColor(244,96,54);
+  doc.text('Amp5 Laddkalkylator',margin,y);
+  y+=7;doc.setFontSize(10);doc.setTextColor(220,220,220);
+  doc.text(title,margin,y);
+  y+=5;doc.setFontSize(8);doc.setTextColor(180,180,180);doc.text('Genererad: '+dateStr,margin,y);
+  doc.setDrawColor(244,96,54);doc.setLineWidth(0.6);doc.line(margin,36,margin+32,36);
+  y=44;
+
+  // Sections
+  sections.forEach(function(sec){
+    // Check page break
+    var needed=10+sec.rows.length*6;
+    if(y+needed>275){doc.addPage();y=18;}
+    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(200,60,30);
+    doc.text(sec.title,margin,y);
+    y+=2;doc.setDrawColor(200,190,180);doc.setLineWidth(0.3);doc.line(margin,y,margin+maxW,y);
+    y+=5;
+    doc.setFont('helvetica','normal');doc.setFontSize(9);
+    sec.rows.forEach(function(row){
+      if(y>275){doc.addPage();y=18;}
+      var cleanLabel=String(row.label).replace(/^[\u2605&#\s]+/,'').trim();
+      var cleanValue=String(row.value).replace(/^[\u2605&#\s]+/,'').trim();
+      doc.setTextColor(100,100,100);doc.text(cleanLabel,margin,y);
+      doc.setTextColor(30,30,30);doc.setFont('helvetica','bold');
+      doc.text(cleanValue,margin+72,y);
+      doc.setFont('helvetica','normal');
+      y+=5.5;
+    });
+    y+=4;
+  });
+
+  // Chart image — redraw in PDF mode for light background
+  if(canvasEl&&canvasEl.width>0&&typeof redrawFn==='function'){
+    pdfMode=true;
+    try{redrawFn();}catch(e){}
+  }
+  if(canvasEl&&canvasEl.width>0){
+    try{
+      var imgData=canvasEl.toDataURL('image/png');
+      var cAspect=canvasEl.height/canvasEl.width;
+      var imgW=maxW,imgH=imgW*cAspect;
+      if(imgH>90){imgH=90;imgW=imgH/cAspect;}
+      if(y+imgH+10>285){doc.addPage();y=18;}
+      doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(200,60,30);
+      doc.text('Diagram',margin,y);y+=6;
+      doc.addImage(imgData,'PNG',margin,y,imgW,imgH);
+      y+=imgH+6;
+    }catch(e){}
+  }
+  // Restore chart to dark mode
+  if(typeof redrawFn==='function'){pdfMode=false;try{redrawFn();}catch(e){}}
+
+  // Footer
+  var pages=doc.internal.getNumberOfPages();
+  for(var p=1;p<=pages;p++){
+    doc.setPage(p);
+    doc.setFontSize(7);doc.setTextColor(150,145,140);
+    doc.text('Amp5 Laddkalkylator \u2013 AmpSociety',margin,290);
+    doc.text('Sida '+p+'/'+pages,W-margin,290,{align:'right'});
+  }
+  doc.save(filename);
+}
+
+window.exportEnergyPDF=function(){
+  var btn=document.getElementById('e_pdfBtn');btn.disabled=true;btn.textContent='Skapar PDF...';
+  try{
+    var d=eParse(),r=eCalc(d);
+    var config=[
+      {label:'Antal uttag',value:String(d.outlets)},
+      {label:'SmartHubs',value:String(d.numHubs)},
+      {label:'Kapacitet/hub',value:d.kwPerHub+' kW'},
+      {label:'Installerad kapacitet',value:d.installedKw+' kW'},
+    ];
+    if(r.effectiveKw<d.installedKw)config.push({label:'Effektiv kapacitet',value:r.effectiveKw.toFixed(0)+' kW'});
+    config.push({label:'Parkeringstid',value:d.parking+' h'});
+    var profSuffix=activeProfile!=='custom'?' ('+profileLabels[activeProfile]+')':'';
+    config.push({label:'Bel\u00e4ggningsgrad',value:d.occ+'%'+profSuffix});
+    config.push({label:'Aktiva uttag',value:String(d.activeSockets)});
+    var eCar=carModels[selectedCarIdx]||carModels[0];
+    var eCo2=calcCO2(r.energyPerSocket,eCar);
+    var results=[
+      {label:'\u2605 Energi per uttag',value:r.energyPerSocket.toFixed(1)+' kWh'},
+      {label:'Total energi',value:r.totalEnergy.toFixed(0)+' kWh'},
+      {label:'Snitteffekt/uttag',value:r.powerPerSocket.toFixed(2)+' kW'},
+      {label:'Max uttag totalt',value:d.maxSockets+' st'},
+      {label:'CO2 sparat/session',value:eCo2.label}
+    ];
+    buildPDF('Energi per uttag',[{title:'Konfiguration',rows:config},{title:'Resultat',rows:results}],eE.chart,function(){drawEnergyChart(d);},'amp5-energi.pdf');
+  }catch(e){alert('Kunde inte skapa PDF: '+e.message);}
+  finally{btn.disabled=false;btn.textContent='Exportera PDF';}
+};
+
+window.exportHubsPDF=function(){
+  var btn=document.getElementById('h_pdfBtn');btn.disabled=true;btn.textContent='Skapar PDF...';
+  try{
+    var d=hParse(),r=hCalc(d);
+    var config=[
+      {label:'Antal platser',value:String(d.outlets)},
+      {label:'\u00d6nskad energi/uttag',value:d.targetKwh+' kWh'},
+      {label:'Parkeringstid',value:d.parkingTime+' h'},
+      {label:'Bel\u00e4ggningsgrad',value:d.occ+'%'},
+      {label:'Kapacitet/hub',value:d.kwPerHub+' kW'}
+    ];
+    if(d.totalKwLimit)config.push({label:'Systemeffekt (tak)',value:d.totalKwLimit+' kW'});
+    var results=[
+      {label:'\u2605 SmartHubs som kr\u00e4vs',value:String(r.totalHubs)},
+      {label:'Kr\u00e4ver minst',value:r.requiredKw.toFixed(1)+' kW'},
+      {label:'Installerad kapacitet',value:r.installedKw+' kW'}
+    ];
+    if(r.isLimited)results.push({label:'Effektiv kapacitet',value:r.effectiveKw.toFixed(0)+' kW'});
+    var hCar=carModels[selectedCarIdx]||carModels[0];
+    var hCo2=calcCO2(r.actualKwhPerSocket,hCar);
+    results.push(
+      {label:'Aktiva uttag',value:d.activeSockets+' st'},
+      {label:'Faktisk energi/uttag',value:r.actualKwhPerSocket.toFixed(1)+' kWh'},
+      {label:'Hubs pga uttag (54/hub)',value:r.hubsBySlots+' st'},
+      {label:'Hubs pga effekt',value:r.hubsByPower+' st'},
+      {label:'CO2 sparat/session',value:hCo2.label}
+    );
+    buildPDF('SmartHub-dimensionering',[{title:'Konfiguration',rows:config},{title:'Resultat',rows:results}],hE.chart,function(){drawHubChart(d);},'amp5-smarthubs.pdf');
+  }catch(e){alert('Kunde inte skapa PDF: '+e.message);}
+  finally{btn.disabled=false;btn.textContent='Exportera PDF';}
+};
+
+window.exportComparePDF=function(){
+  var btn=document.getElementById('c_pdfBtn');btn.disabled=true;btn.textContent='Skapar PDF...';
+  try{
+    var secs=[];
+    var car=carModels[selectedCarIdx]||carModels[0];
+    scenarios.forEach(function(s,i){
+      var r=cCalc(s);
+      var rangeKm=Math.round((r.energyPerSocket/car.kwh100)*100);
+      var rows=[
+        {label:'Uttag',value:String(r.outlets)},
+        {label:'SmartHubs',value:String(r.numHubs)},
+        {label:'Parkeringstid',value:r.parking+' h'},
+        {label:'Bel\u00e4ggningsgrad',value:r.occ+'%'},
+        {label:'kW/SmartHub',value:r.kwPerHub+' kW'},
+        {label:'Installerad kapacitet',value:r.installedKw+' kW'}
+      ];
+      if(r.isLimited)rows.push({label:'Effektiv kapacitet',value:r.effectiveKw.toFixed(0)+' kW'});
+      var cCo2=calcCO2(r.energyPerSocket,car);
+      rows.push(
+        {label:'\u2605 Energi/uttag',value:r.energyPerSocket.toFixed(1)+' kWh'},
+        {label:'Total energi',value:r.totalEnergy.toFixed(0)+' kWh'},
+        {label:'kW/uttag',value:r.powerPerSocket.toFixed(2)+' kW'},
+        {label:'R\u00e4ckvidd ('+car.name+')',value:rangeKm+' km'},
+        {label:'CO2 sparat',value:cCo2.label}
+      );
+      secs.push({title:s.name,rows:rows});
+    });
+    buildPDF('Scenarioj\u00e4mf\u00f6relse',secs,document.getElementById('c_chart'),drawCompareChart,'amp5-jamforelse.pdf');
+  }catch(e){alert('Kunde inte skapa PDF: '+e.message);}
+  finally{btn.disabled=false;btn.textContent='Exportera PDF';}
+};
+
+// Init
+populateCarSelects();
+renderEnergy();
+renderHubs();
+renderCompare();
+
+// ── ONBOARDING TOUR ─────────────────────────────────────
+(function(){
+  if(localStorage.getItem('amp5_tour_done'))return;
+  var steps=[
+    {selector:'.tab-btn[data-tab="energy"]',pos:'below',title:'Beräkna energi',text:'Ange antal uttag, SmartHubs och parkeringstid för att se hur mycket energi varje uttag levererar.'},
+    {selector:'.tab-btn[data-tab="hubs"]',pos:'below',title:'Beräkna SmartHubs',text:'Ange ditt energibehov per uttag så beräknas hur många SmartHubs som krävs.'},
+    {selector:'.tab-btn[data-tab="compare"]',pos:'below',title:'Jämför scenarier',text:'Ställ upp till 6 konfigurationer sida vid sida och jämför energi och antal hubbar.'},
+    {selector:'#e_numHubs',pos:'above',title:'Vad är en SmartHub?',text:'En SmartHub är en laddningsenhet som delar upp till 44 kW mellan max 54 uttag med smart lastbalansering.'}
+  ];
+  var overlay,tooltip,prevAnchor,cur=0;
+
+  function cleanup(){
+    if(overlay)overlay.remove();
+    if(tooltip)tooltip.remove();
+    if(prevAnchor)prevAnchor.classList.remove('tour-highlight');
+    overlay=null;tooltip=null;prevAnchor=null;
+  }
+  function endTour(){cleanup();localStorage.setItem('amp5_tour_done','1');}
+
+  function showStep(i){
+    cleanup();
+    if(i>=steps.length){endTour();return;}
+    cur=i;var step=steps[i];
+    var anchor=document.querySelector(step.selector);
+    if(!anchor){endTour();return;}
+
+    // Fix 1: skip hidden elements (e.g. inside non-active tab panels)
+    var aRect=anchor.getBoundingClientRect();
+    if(aRect.width===0&&aRect.height===0){showStep(i+1);return;}
+
+    // Overlay
+    overlay=document.createElement('div');
+    overlay.className='tour-overlay';
+    overlay.addEventListener('click',endTour);
+    document.body.appendChild(overlay);
+
+    // Highlight anchor
+    anchor.classList.add('tour-highlight');
+    prevAnchor=anchor;
+
+    // Scroll anchor into view
+    anchor.scrollIntoView({behavior:'smooth',block:'center'});
+
+    // Fix 2: defer positioning until after scroll completes
+    setTimeout(function(){
+      // Build tooltip
+      tooltip=document.createElement('div');
+      tooltip.className='tour-tooltip pos-'+step.pos;
+
+      var dots='';
+      for(var d=0;d<steps.length;d++)dots+='<span class="tour-dot'+(d===i?' active':'')+'"></span>';
+
+      tooltip.innerHTML='<div class="tour-title">'+step.title+'</div>'+
+        '<div class="tour-text">'+step.text+'</div>'+
+        '<div class="tour-footer">'+
+          '<div style="display:flex;flex-direction:column;gap:6px">'+
+            '<div class="tour-dots">'+dots+'</div>'+
+            '<button class="tour-skip">Hoppa över</button>'+
+          '</div>'+
+          '<button class="tour-next">'+(i<steps.length-1?'Nästa':'Klar')+'</button>'+
+        '</div>';
+      document.body.appendChild(tooltip);
+
+      // Position
+      var rect=anchor.getBoundingClientRect();
+      var tW=tooltip.offsetWidth,tH=tooltip.offsetHeight;
+      var left=Math.max(16,Math.min(rect.left,window.innerWidth-tW-16));
+      var top;
+      // Fix 4: clamp top to prevent off-screen
+      if(step.pos==='below'){
+        top=rect.bottom+window.scrollY+12;
+        top=Math.min(top,window.scrollY+window.innerHeight-tH-16);
+      }else{
+        top=rect.top+window.scrollY-tH-12;
+        top=Math.max(top,window.scrollY+16);
+      }
+      tooltip.style.left=left+'px';
+      tooltip.style.top=top+'px';
+
+      // Arrow positioning — align with anchor center
+      var arrowLeft=Math.max(16,Math.min(rect.left+rect.width/2-left-6,tW-24));
+      tooltip.style.setProperty('--arrow-left',arrowLeft+'px');
+
+      // Events
+      tooltip.querySelector('.tour-next').addEventListener('click',function(e){e.stopPropagation();showStep(i+1);});
+      tooltip.querySelector('.tour-skip').addEventListener('click',function(e){e.stopPropagation();endTour();});
+      tooltip.addEventListener('click',function(e){e.stopPropagation();});
+    },400);
+  }
+
+  // Start tour after a short delay so page renders first
+  setTimeout(function(){showStep(0);},600);
+})();
+
+})();
+</script>
+</body>
+</html>
