@@ -6,3 +6,6 @@ desktop.ini
 # Tillfälliga / lokala filer
 *.tmp
 *.bak
+
+# Claude projektbeskrivning - ska ALDRIG till GitHub
+CLAUDE.md
