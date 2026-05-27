@@ -1,0 +1,8 @@
+# OS- och OneDrive-skräp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Tillfälliga / lokala filer
+*.tmp
+*.bak
