@@ -7,5 +7,6 @@ desktop.ini
 *.tmp
 *.bak
 
-# Claude projektbeskrivning - ska ALDRIG till GitHub
+# Interna dokument - ska ALDRIG till GitHub
 CLAUDE.md
+RELEASE_NOTES*.md
