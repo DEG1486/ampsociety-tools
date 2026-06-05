@@ -211,7 +211,7 @@ const I = {
 // K1-fix: defensiv guard innan Amp5Calc-konstanter konsumeras vid modulladdning.
 // Om calc.js inte hunnit köra (bundle-ordning eller laddfel) ger vi tydligt fel istället för cryptic TypeError.
 if (!window.Amp5Calc || typeof window.Amp5Calc.computeEnergy !== 'function') {
-  const msg = 'Amp5Calc är inte laddad — kontrollera bundle-ordningen (calc.js måste köras före variant.jsx).';
+  const msg = 'Amp5Calc är inte laddad. Kontrollera bundle-ordningen (calc.js måste köras före variant.jsx).';
   console.error(msg);
   if (typeof document !== 'undefined' && document.body) {
     document.body.innerHTML = `<div style="padding:40px;font-family:sans-serif;color:#c62828">${msg}</div>`;
@@ -234,8 +234,8 @@ const LIMIT_SUB = {
   [window.Amp5Calc.LIMIT_REASON.HW_CONFIG]:  'ej uppnåeligt med vald konfiguration',
 };
 const LIMIT_WARNINGS = {
-  [window.Amp5Calc.LIMIT_REASON.HW]:         `Målet kräver högre effekt per bil än fordonens AC-gräns (${window.Amp5Calc.HW_LIMIT_KW} kW) — kortare parkering eller fler uttag krävs.`,
-  [window.Amp5Calc.LIMIT_REASON.SYSTEM_CAP]: 'Fastighetseffekttaket begränsar — målet kräver servisutökning.',
+  [window.Amp5Calc.LIMIT_REASON.HW]:         `Målet kräver högre effekt per bil än fordonens AC-gräns (${window.Amp5Calc.HW_LIMIT_KW} kW). Kortare parkering eller fler uttag krävs.`,
+  [window.Amp5Calc.LIMIT_REASON.SYSTEM_CAP]: 'Fastighetseffekttaket begränsar. Målet kräver servisutökning.',
   [window.Amp5Calc.LIMIT_REASON.HW_CONFIG]:  'Målet uppnås inte med vald tid och beläggning.',
 };
 
@@ -309,8 +309,8 @@ function InstrumentVariant() {
     if (m === 'simple') setHubs(null);
   }, []);
   // F1: Elnät (servissäkring 3-fas 400 V + befintlig last)
-  const [fuseSizeA, setFuseSizeA] = React.useState(125);
-  const [existingLoadPct, setExistingLoadPct] = React.useState(0.50);
+  const [fuseSizeA, setFuseSizeA] = React.useState(63);
+  const [existingLoadPct, setExistingLoadPct] = React.useState(0.20);
   // F2: Ekonomi
   const [materialCost, setMaterialCost] = React.useState(100000);
   const [installationCost, setInstallationCost] = React.useState(150000);
@@ -530,6 +530,8 @@ function LeftPanel(p) {
       {isSimple ? (
         <Group label="Fastighet">
           <PropertyTypePicker value={p.propertyType} onChange={p.applyPropertyType} />
+          <SliderField label="Parkeringstid" value={p.parkingHours}
+            onChange={p.setParkingHours} min={1} max={24} step={1} suffix="h" />
         </Group>
       ) : (
         <Group label="Parkering">
@@ -544,7 +546,7 @@ function LeftPanel(p) {
           {p.mode === 'energy' && (
             <SliderField label="Peak-beläggning" value={Math.round(p.peakOcc*100)}
               onChange={(v) => p.setPeakOcc(v/100)} min={5} max={100} step={1} suffix="%"
-              hint="Profilens toppvärde — formen bevaras" />
+              hint="Profilens toppvärde, formen bevaras" />
           )}
         </Group>
       )}
@@ -552,9 +554,6 @@ function LeftPanel(p) {
       {!isSimple && (
         <Group label="Avancerat">
           <CarAcLimitPicker value={p.carAcLimit} onChange={p.setCarAcLimit} />
-          <SliderField label="Verkningsgrad" value={Math.round(p.efficiency*100)}
-            onChange={(v) => p.setEfficiency(v/100)} min={85} max={100} step={1} suffix="%"
-            hint="Kabel- och hub-förluster (default 95%)" />
         </Group>
       )}
 
@@ -586,7 +585,7 @@ function LeftPanel(p) {
               hint="Nätbolagets effektavgift (typ. 40–120 kr/kW/mån för kommersiella abonnemang)" />
             <SliderField label="Drift & underhåll" value={p.omPctYear}
               onChange={p.setOmPctYear} min={0} max={10} step={1} suffix="%/år"
-              hint="Service, kommunikation, betalflöde — typiskt 2–4 % av kapital/år" />
+              hint="Service, kommunikation, betalflöde. Typiskt 2–4 % av kapital/år" />
           </>
         )}
       </Group>
@@ -600,18 +599,19 @@ function Header() {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 20 }}>
-        <img src={window.Amp5Assets.logo} alt="AmpSociety" style={{ display: 'block', height: 24, width: 'auto' }} />
+        <img src={window.Amp5Assets.logo} alt="AmpSociety" style={{ display: 'block', height: 32, width: 'auto' }} />
         <div style={{ fontFamily: I.mono, fontSize: 10, letterSpacing: 2, color: I.mute, textTransform: 'uppercase', fontWeight: 700 }}>
           Laddkalkylator
         </div>
       </div>
-      {/* Balken — AmpSocietys visuella signatur */}
-      <div style={{ height: 4, width: 64, background: I.accent, marginBottom: 16 }} />
-      <div style={{ fontFamily: I.serif, fontSize: 36, fontWeight: 500, letterSpacing: -0.5, lineHeight: 1.05, marginBottom: 10, color: I.ink }}>
+      {/* Rubrik först, balken direkt under (brand-manual) */}
+      <div style={{ fontFamily: I.serif, fontSize: 36, fontWeight: 500, letterSpacing: -0.5, lineHeight: 1.05, color: I.ink }}>
         Dimensionera rätt.<br/>Undvik plåsterlösningar.
       </div>
+      {/* Balken — AmpSocietys visuella signatur, alltid under rubriken */}
+      <div style={{ height: 4, width: 64, background: I.accent, marginTop: 14, marginBottom: 16 }} />
       <div style={{ fontSize: 13, color: I.ink2, lineHeight: 1.55, fontWeight: 400 }}>
-        Ange din parkering — se hur mycket energi varje plats får, eller hur många SmartHubs som krävs.
+        Ange din parkering, se hur mycket energi varje plats får, eller hur många SmartHubs som krävs.
       </div>
     </div>
   );
@@ -741,14 +741,21 @@ function SliderField({ label, value, onChange, min, max, step = 1, suffix, hint 
           {value}<span style={{ color: I.mute, fontSize: 11, marginLeft: 3 }}>{suffix}</span>
         </div>
       </div>
-      <div style={{ position: 'relative', height: 20, display: 'flex', alignItems: 'center' }}>
-        <div style={{ position: 'absolute', left: 0, right: 0, height: 2, background: I.line }} />
-        <div style={{ position: 'absolute', left: 0, width: `${pct}%`, height: 2, background: I.ink }} />
-        <div style={{ position: 'absolute', left: `calc(${pct}% - 6px)`, width: 12, height: 12, borderRadius: 6, background: I.accent, border: `2px solid ${I.bg}`, pointerEvents: 'none' }} />
+      {/* Större klickyta (36px) + tjockare track + större puck = lättare att träffa */}
+      <div style={{ position: 'relative', height: 36, display: 'flex', alignItems: 'center', touchAction: 'none' }}>
+        <div style={{ position: 'absolute', left: 0, right: 0, height: 4, background: I.line, borderRadius: 2 }} />
+        <div style={{ position: 'absolute', left: 0, width: `${pct}%`, height: 4, background: I.ink, borderRadius: 2 }} />
+        <div style={{
+          position: 'absolute', left: `calc(${pct}% - 10px)`,
+          width: 20, height: 20, borderRadius: 10,
+          background: I.accent, border: `3px solid ${I.bg}`,
+          boxShadow: '0 1px 3px rgba(0,0,0,0.18)',
+          pointerEvents: 'none',
+        }} />
         <input type="range" value={value} min={min} max={max} step={step}
           aria-label={label}
           onChange={(e) => onChange(Number(e.target.value))}
-          style={{ position: 'absolute', inset: 0, width: '100%', opacity: 0, cursor: 'pointer', margin: 0 }} />
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer', margin: 0, padding: 0 }} />
       </div>
       {hint && <div style={{ fontSize: 11, color: I.mute, marginTop: 6 }}>{hint}</div>}
     </div>
@@ -980,8 +987,8 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit }) {
   const C = window.Amp5Calc;
   const { status, servisKW, existingKW, availableKW, surplusKW, upgradeCostLow, upgradeCostHigh } = assessment;
   const STATUS_CFG = {
-    ok:       { color: '#2E7D32', bg: '#E8F5E9', label: 'OK — elnätet täcker laddningsbehovet' },
-    marginal: { color: '#E65100', bg: '#FFF3E0', label: 'Marginellt — knappt tillräcklig kapacitet' },
+    ok:       { color: '#2E7D32', bg: '#E8F5E9', label: 'OK: elnätet täcker laddningsbehovet' },
+    marginal: { color: '#E65100', bg: '#FFF3E0', label: 'Marginellt: knappt tillräcklig kapacitet' },
     upgrade:  { color: '#C62828', bg: '#FFEBEE', label: 'Servisutökning krävs' },
   };
   const cfg = STATUS_CFG[status] || STATUS_CFG.ok;
@@ -1032,7 +1039,7 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit }) {
             background: I.surface, borderLeft: `3px solid ${I.mute}`,
             fontSize: 11, color: I.mute, lineHeight: 1.5,
           }}>
-            💡 Ange <strong>Fastighetseffekttak</strong> (kW) så delar SmartHubbarna automatiskt på den tillgängliga effekten — och elnätsbedömningen blir mer exakt.
+            💡 Ange <strong>Fastighetseffekttak</strong> (kW) så delar SmartHubbarna automatiskt på den tillgängliga effekten, och elnätsbedömningen blir mer exakt.
           </div>
         )}
         {showTrickleWarn && (
@@ -1042,7 +1049,7 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit }) {
             fontSize: 11, color: '#5C2E00', lineHeight: 1.5,
           }}>
             ⚠️ <strong>Underdimensionerat:</strong> vid samtidig peak får varje aktiv bil bara{' '}
-            <strong>{C.fmt(perCarLimitKW, { digits: 1 })} kW</strong> — det motsvarar bara ~{C.fmt(perCarLimitKW * 6, { digits: 0 })} km räckvidd per timme.
+            <strong>{C.fmt(perCarLimitKW, { digits: 1 })} kW</strong>, det motsvarar bara ~{C.fmt(perCarLimitKW * 6, { digits: 0 })} km räckvidd per timme.
             Överväg fler SmartHubs eller färre samtidiga uttag för att leverera meningsfull laddning.
           </div>
         )}
@@ -1184,7 +1191,7 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
     <div style={{ padding: '32px 48px 48px', maxWidth: 1400, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 24, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <img src={window.Amp5Assets.logo} alt="AmpSociety" style={{ display: 'block', height: 24, width: 'auto' }} />
+          <img src={window.Amp5Assets.logo} alt="AmpSociety" style={{ display: 'block', height: 32, width: 'auto' }} />
           <div style={{ height: 4, width: 48, background: I.accent }} />
           <div style={{ fontFamily: I.serif, fontSize: 26, fontWeight: 500, letterSpacing: -0.4, color: I.ink }}>
             Scenariojämförelse
@@ -1228,16 +1235,6 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
             <option value={11}>11 kW (3-fas 16 A)</option>
             <option value={22}>22 kW (3-fas 32 A)</option>
           </select>
-        </CompareGlobalSetting>
-        <CompareGlobalSetting label="Verkningsgrad">
-          <input type="range" min={85} max={100} step={1}
-            aria-label="Verkningsgrad"
-            value={Math.round(efficiency * 100)}
-            onChange={(e) => setEfficiency(Number(e.target.value) / 100)}
-            style={{ width: 110, accentColor: I.accent }} />
-          <span style={{ fontFamily: I.mono, fontSize: 12, color: I.ink, minWidth: 36 }}>
-            {Math.round(efficiency * 100)}%
-          </span>
         </CompareGlobalSetting>
       </div>
 

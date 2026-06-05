@@ -367,7 +367,7 @@
 
   // --- Formateringshjälp -------------------------------------------------
   function fmt(n, opts = {}) {
-    if (n == null || !isFinite(n)) return '—';
+    if (n == null || !isFinite(n)) return '–';
     const { digits = 0, suffix = '' } = opts;
     return n.toLocaleString('sv-SE', { maximumFractionDigits: digits, minimumFractionDigits: digits }) + suffix;
   }

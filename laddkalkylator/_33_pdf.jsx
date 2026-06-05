@@ -171,7 +171,7 @@ function summarizeInputs(data) {
     { label: 'Mål per plats', value: i.desiredKWhPerOutlet, unit: 'kWh' },
     { label: 'Parkeringstid', value: i.parkingHours, unit: 'h' },
     { label: 'Beläggning', value: Math.round(i.occupancyPct * 100), unit: '%' },
-    { label: 'Systemtak', value: i.systemCap != null ? i.systemCap : '—', unit: 'kW' },
+    { label: 'Systemtak', value: i.systemCap != null ? i.systemCap : '–', unit: 'kW' },
     { label: 'Referensbil', value: i.carName, unit: '' },
   ];
 }
@@ -416,7 +416,7 @@ function PDFEditorial({ data }) {
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0) 30%, rgba(0,0,0,.65) 100%)' }} />
           <div style={{ position: 'absolute', bottom: 20, left: 20, right: 20, maxWidth: 440 }}>
             <div style={{ fontFamily: BRAND.serif, fontStyle: 'italic', fontSize: 20, color: '#fff', lineHeight: 1.25, textShadow: '0 2px 8px rgba(0,0,0,.6)' }}>
-              "Dimensionera rätt från början — undvik plåsterlösningar."
+              "Dimensionera rätt från början, undvik plåsterlösningar."
             </div>
           </div>
         </div>
@@ -431,12 +431,12 @@ function PDFEditorial({ data }) {
             <Eyebrow color={BRAND.accentDeep}>Nästa steg</Eyebrow>
             <div style={{ height: 10 }} />
             <div style={{ fontFamily: BRAND.serif, fontSize: 28, fontWeight: 500, letterSpacing: -0.5, lineHeight: 1.05, color: BRAND.ink, marginBottom: 10 }}>
-              Boka ett möte —<br/><span style={{ fontStyle: 'italic' }}>vi går igenom ert förslag.</span>
+              Boka ett möte.<br/><span style={{ fontStyle: 'italic' }}>Vi går igenom ert förslag.</span>
             </div>
             <div style={{ fontSize: 12, color: BRAND.ink2, lineHeight: 1.5, maxWidth: 380 }}>
               Vi tar fram en dimensioneringsplan, kostnadsuppskattning och
               tidplan utifrån era värden. Skanna koden för att öppna
-              kalkylatorn igen — eller kontakta oss direkt.
+              kalkylatorn igen, eller kontakta oss direkt.
             </div>
             <div style={{ height: 18 }} />
             <div style={{ fontFamily: BRAND.mono, fontSize: 11, color: BRAND.ink }}>
@@ -709,16 +709,17 @@ function PDFCompare({ data }) {
             <div style={{ fontSize: 10, color: BRAND.ink2, marginTop: 2 }}>{data.meta.date} · {data.meta.reportId}</div>
           </div>
         </div>
-        <Balk style={{ marginTop: 18 }} />
-        {/* B1-fix: visa projektnamn om användaren angett ett (tom sträng = ej satt — ingen hårdkodad strängkoll) */}
+        {/* B1-fix: visa projektnamn om användaren angett ett (tom sträng = ej satt, ingen hårdkodad strängkoll) */}
         {data.meta.projectName && (
-          <div style={{ fontFamily: BRAND.mono, fontSize: 9, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: BRAND.mute, marginTop: 14 }}>
+          <div style={{ fontFamily: BRAND.mono, fontSize: 9, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: BRAND.mute, marginTop: 18 }}>
             {data.meta.projectName}
           </div>
         )}
-        <div style={{ fontFamily: BRAND.serif, fontSize: 30, fontWeight: 700, color: BRAND.ink, marginTop: 8, letterSpacing: -0.3 }}>
+        <div style={{ fontFamily: BRAND.serif, fontSize: 30, fontWeight: 700, color: BRAND.ink, marginTop: 14, letterSpacing: -0.3 }}>
           Scenarioj&auml;mf&ouml;relse
         </div>
+        {/* Balken — direkt under rubriken per brand-manual */}
+        <Balk style={{ marginTop: 12 }} />
         <div style={{ fontSize: 11, color: BRAND.mute, marginTop: 6 }}>
           Sida vid sida-utvärdering. Räckvidd beräknad mot {data.car.name} ({Amp.fmt(data.car.kwh100, { digits: 1 })} kWh/100&nbsp;km).
         </div>
