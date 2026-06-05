@@ -312,6 +312,8 @@ function InstrumentVariant() {
       setHubs(null);
       setCapPerHub(C.CAP_PER_HUB_KW);
       setSystemCap(null);
+      setCarAcLimit(C.CAR_AC_LIMIT_KW);
+      setExistingLoadPct(0.20);
     }
   }, []);
   // F1: Elnät (servissäkring 3-fas 400 V + befintlig last)
@@ -351,10 +353,15 @@ function InstrumentVariant() {
   }), [outlets, desiredKWh, parkingHours, occPct, capPerHub, systemCap, carAcLimit, efficiency]);
 
   // F1: Elnätsbedömning — systemets toppeffekt mot serviskapacitet
-  const gridAssessment = React.useMemo(() => C.computeGridAssessment({
-    fuseSizeA, existingLoadPct,
-    systemPeakKW: mode === 'energy' ? energy.peakPowerKW : sizing.effectiveCap,
-  }), [fuseSizeA, existingLoadPct, energy.peakPowerKW, sizing.effectiveCap, mode]);
+  const gridAssessment = React.useMemo(() => {
+    // G1-fix: i hubs-läge ska elnätsbedömningen använda faktisk samtidig topp
+    // (samma realistiska tal som effekttariffen), inte hela installerade hub-kapaciteten.
+    const hubsPeak = Math.min(sizing.effectiveCap, outlets * occPct * carAcLimit);
+    return C.computeGridAssessment({
+      fuseSizeA, existingLoadPct,
+      systemPeakKW: mode === 'energy' ? energy.peakPowerKW : hubsPeak,
+    });
+  }, [fuseSizeA, existingLoadPct, energy.peakPowerKW, sizing.effectiveCap, outlets, occPct, carAcLimit, mode]);
 
   // K4-fix: räkna ut effekt per laddande bil vid samtidig peak — avslöjar "trickle"-scenarier
   // där SmartHub-taket sprids på så många bilar att varje får under 2 kW.
@@ -542,7 +549,7 @@ function LeftPanel(p) {
               min={10} max={C.CAP_PER_HUB_KW} step={1} suffix="kW" />
             <NumberField label="Fastighetseffekttak" value={p.systemCap}
               placeholder="obegränsat" onChange={p.setSystemCap}
-              min={0} max={10000} suffix="kW" optional />
+              min={1} max={10000} suffix="kW" optional />
           </>
         )}
       </Group>
@@ -952,7 +959,10 @@ function GlyphFlat() {
 // ───────── F1: FusePicker (3-fas 400 V) ─────────
 function FusePicker({ value, onChange }) {
   const presets = [63, 125, 200];
-  const isCustom = !presets.includes(value);
+  // G4-fix: håll custom-läget i eget state så fältet inte avmonteras mitt i inmatning
+  // när mellansteget råkar matcha en preset (t.ex. 63 på väg mot 630).
+  const [customMode, setCustomMode] = React.useState(!presets.includes(value));
+  const isCustom = customMode || !presets.includes(value);
   return (
     <div>
       <div style={{ fontSize: 13, color: I.ink2, marginBottom: 8 }}>
@@ -964,7 +974,7 @@ function FusePicker({ value, onChange }) {
           const kw = Math.round(Math.sqrt(3) * 400 * a / 1000);
           const active = !isCustom && value === a;
           return (
-            <button key={a} onClick={() => onChange(a)}
+            <button key={a} onClick={() => { setCustomMode(false); onChange(a); }}
               style={{
                 background: active ? I.ink : I.surface,
                 color: active ? I.bg : I.ink,
@@ -978,7 +988,7 @@ function FusePicker({ value, onChange }) {
             </button>
           );
         })}
-        <button onClick={() => { if (!isCustom) onChange(250); }}
+        <button onClick={() => { setCustomMode(true); if (presets.includes(value)) onChange(250); }}
           style={{
             background: isCustom ? I.ink : I.surface,
             color: isCustom ? I.bg : I.ink2,
@@ -1338,6 +1348,7 @@ function ScenarioCard({ color, scenario, energy, rangeKm, canRemove, onChange, o
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <input value={s.name}
           onChange={(e) => onChange({ name: e.target.value })}
+          maxLength={24}
           style={{
             border: 'none', background: 'transparent', color,
             fontFamily: I.mono, fontSize: 10, fontWeight: 700,
@@ -1364,7 +1375,7 @@ function ScenarioCard({ color, scenario, energy, rangeKm, canRemove, onChange, o
         onChange={(v) => onChange({ capPerHub: v })} emptyValue={C.CAP_PER_HUB_KW}
         min={10} max={C.CAP_PER_HUB_KW} />
       <NumberField compact label="Systemtak (kW)" value={s.systemCap} placeholder="obegränsat"
-        onChange={(v) => onChange({ systemCap: v })} min={0} max={10000} optional />
+        onChange={(v) => onChange({ systemCap: v })} min={1} max={10000} optional />
 
       <div>
         <div style={{ fontSize: 10, color: I.mute, marginBottom: 4 }}>Profil</div>

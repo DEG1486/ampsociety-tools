@@ -181,7 +181,8 @@ function summarizeInputs(data) {
 // --------------------------------------------------------------------------
 
 function PowerChart({ hourly, cap, height = 140, width = 682, theme = 'light' }) {
-  const max = Math.max(cap, ...hourly) * 1.08;
+  // Golv på 1 så vi aldrig delar med 0 (NaN-koordinater) när cap/hourly är 0.
+  const max = Math.max(cap, ...hourly, 1) * 1.08;
   const ax = { left: 32, right: 10, top: 8, bottom: 22 };
   const W = width - ax.left - ax.right;
   const H = height - ax.top - ax.bottom;
@@ -749,6 +750,7 @@ function PDFCompare({ data }) {
                 fontFamily: BRAND.mono, fontSize: 9, fontWeight: 700,
                 letterSpacing: 1.2, textTransform: 'uppercase', color,
                 paddingBottom: 8, borderBottom: `1px solid ${BRAND.lineSoft}`, marginBottom: 10,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
               }}>{sc.name}</div>
 
               <div style={{ textAlign: 'center', marginBottom: 14 }}>

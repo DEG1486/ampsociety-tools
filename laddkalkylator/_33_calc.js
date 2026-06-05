@@ -94,25 +94,28 @@
   //   hwLimitKW (optional, default HW_LIMIT_KW) — bilens AC-laddartak
   //   efficiency (optional, default 0.95) — system-η, drabbar levererad energi
   function computeEnergy(inp) {
-    const outlets = Math.max(1, inp.outlets);
+    // Robusthet: numeriska indata defaultas om undefined/NaN/Infinity (parity med computeHubs).
+    const num = (v, d) => (Number.isFinite(v) ? v : d);
+    const outlets = Math.max(1, num(inp.outlets, 1));
     const autoHubs = Math.max(1, Math.ceil(outlets / OUTLETS_PER_HUB));
-    const hubs = inp.hubs ?? autoHubs;
+    const hubs = Number.isFinite(inp.hubs) ? inp.hubs : autoHubs;
     // SmartHub-spec: 44 kW är hårdvarutaket per hub.
-    const capPerHub = Math.min(CAP_PER_HUB_KW, Math.max(1, inp.capPerHub ?? CAP_PER_HUB_KW));
-    const hwLimit = inp.hwLimitKW ?? HW_LIMIT_KW;
-    const efficiency = Math.max(0.5, Math.min(1, inp.efficiency ?? DEFAULT_EFFICIENCY));
+    const capPerHub = Math.min(CAP_PER_HUB_KW, Math.max(1, num(inp.capPerHub, CAP_PER_HUB_KW)));
+    const hwLimit = num(inp.hwLimitKW, HW_LIMIT_KW);
+    const efficiency = Math.max(0.5, Math.min(1, num(inp.efficiency, DEFAULT_EFFICIENCY)));
     const installedCap = hubs * capPerHub;
-    const effectiveCap = inp.systemCap != null
-      ? Math.min(installedCap, inp.systemCap)
-      : installedCap;
+    // systemCap <= 0 (eller null) = inget tak. 0 kW är inte ett meningsfullt effekttak.
+    const systemCap = (inp.systemCap != null && inp.systemCap > 0) ? inp.systemCap : null;
+    const effectiveCap = systemCap != null ? Math.min(installedCap, systemCap) : installedCap;
 
-    // B2-fix: varna om peakOccupancyPct saknas — default 0 ger noll energi.
+    // B2-fix: varna om peakOccupancyPct saknas (default 0 ger noll energi).
     const rawOcc = inp.peakOccupancyPct ?? inp.avgOccupancyPct;
     if (rawOcc == null && typeof console !== 'undefined') {
-      console.warn('Amp5Calc.computeEnergy: peakOccupancyPct saknas — defaultar till 0 (noll energiutput).');
+      console.warn('Amp5Calc.computeEnergy: peakOccupancyPct saknas, defaultar till 0 (noll energiutput).');
     }
     const occInput = rawOcc ?? 0;
-    const parkingInt = Math.max(1, Math.round(inp.parkingHours));
+    // parkingInt cappas till 24 så presence-faltningen inte wrappar dygnet flera varv.
+    const parkingInt = Math.min(24, Math.max(1, Math.round(num(inp.parkingHours, 1))));
 
     // Ankomstfördelning = profilens stigande flank. Profilen säger NÄR
     // bilar dyker upp; parkeringstiden säger HUR LÄNGE de står. Platta
@@ -222,6 +225,8 @@
     const occ = Math.max(0, Math.min(1, num(inp.occupancyPct, 0)));
     const parkingH = Math.max(0.5, num(inp.parkingHours, 0.5));
     const desiredKWhPerOutlet = Math.max(0, num(inp.desiredKWhPerOutlet, 0));
+    // systemCap <= 0 (eller null) = inget tak. 0 kW är inte ett meningsfullt effekttak.
+    const systemCap = (inp.systemCap != null && inp.systemCap > 0) ? inp.systemCap : null;
     const activeOutlets = outlets * occ;
 
     // Levererad energi target → grid-side power needed = target / η.
@@ -231,16 +236,16 @@
 
     // Hubs som faktiskt tillför effekt — systemCap bestämmer taket.
     // Om systemCap finns är hubs över (systemCap/capPerHub) verkningslösa.
-    const maxUsableHubs = inp.systemCap != null
-      ? Math.max(1, Math.ceil(inp.systemCap / capPerHub))
+    const maxUsableHubs = systemCap != null
+      ? Math.max(1, Math.ceil(systemCap / capPerHub))
       : Infinity;
     const hubsByPowerIdeal = Math.ceil(powerNeeded / capPerHub);
     const hubsByPower = Math.min(hubsByPowerIdeal, maxUsableHubs);
 
     const hubs = Math.max(1, hubsByOutlets, hubsByPower);
     const installedCap = hubs * capPerHub;
-    const effectiveCap = inp.systemCap != null
-      ? Math.min(installedCap, inp.systemCap)
+    const effectiveCap = systemCap != null
+      ? Math.min(installedCap, systemCap)
       : installedCap;
 
     // actualEnergy är levererat till bilen efter η-förluster.
@@ -267,7 +272,7 @@
       if (!hwFeasible) limitReason = LIMIT_REASON.HW;
       // Kapacitetsbaserat test: om systemtaket självt ligger under behovet är det
       // servisen som begränsar (fler hubs hjälper inte), inte hub-konfigurationen.
-      else if (inp.systemCap != null && inp.systemCap < powerNeeded - 1e-6) limitReason = LIMIT_REASON.SYSTEM_CAP;
+      else if (systemCap != null && systemCap < powerNeeded - 1e-6) limitReason = LIMIT_REASON.SYSTEM_CAP;
       else limitReason = LIMIT_REASON.HW_CONFIG;
     }
 
@@ -359,7 +364,7 @@
     const monthlyOpCost      = monthlyEnergyCost + monthlyPowerCost;
     const monthlyRevenue     = monthlyEnergyKWh * (chargingFee || 0);
     // O&M som månadssnitt — typiskt 2-4% av kapital/år (default 3%)
-    const monthlyOmCost      = capitalCost * (omPctYear || 0) / 12;
+    const monthlyOmCost      = capitalCost * (Number.isFinite(omPctYear) ? omPctYear : 0.03) / 12;
     const monthlyNet         = monthlyRevenue - monthlyOpCost - monthlyOmCost;
     const paybackMonths      = monthlyNet > 0 ? capitalCost / monthlyNet : null;
     const paybackYears       = paybackMonths != null ? paybackMonths / 12 : null;
