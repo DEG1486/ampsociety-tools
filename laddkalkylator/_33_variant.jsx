@@ -83,6 +83,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, reportId,
     });
     return {
       name: s.name,
+      colorIndex: s.colorSlot,
       inputs: { ...s, profileLabel: profile.label },
       outputs: e,
       rangeKm: C.rangeKm(e.perOutletKWh, car.kwh100),
@@ -242,8 +243,14 @@ const LIMIT_WARNINGS = {
 const SCENARIO_NAMES = ['Scenario A', 'Scenario B', 'Scenario C', 'Scenario D', 'Scenario E', 'Scenario F'];
 const MAX_SCENARIOS = 6;
 
-function defaultScenario(name) {
+// Stabilt id per scenario så React-key följer identitet, inte position.
+// colorSlot = stabil palett-plats (0..N), allokeras till första lediga vid add
+// så färgerna aldrig krockar eller ommålas vid borttagning mitt i listan.
+let _scenarioSeq = 0;
+function defaultScenario(name, colorSlot = 0) {
   return {
+    cid: _scenarioSeq++,
+    colorSlot,
     name,
     outlets: 20,
     hubs: null,
@@ -329,8 +336,8 @@ function InstrumentVariant() {
   // LCC: drift & underhåll, %/år av kapital
   const [omPctYear, setOmPctYear] = React.useState(3);
   const [scenarios, setScenarios] = React.useState(() => [
-    defaultScenario(SCENARIO_NAMES[0]),
-    { ...defaultScenario(SCENARIO_NAMES[1]), outlets: 50, profileKey: 'mall', peakOcc: 0.85 },
+    defaultScenario(SCENARIO_NAMES[0], 0),
+    { ...defaultScenario(SCENARIO_NAMES[1], 1), outlets: 50, profileKey: 'mall', peakOcc: 0.85 },
   ]);
   // Stabilt rapport-ID per session så omtryckning ger samma referens.
   const reportId = React.useRef('A5-' + Math.floor(Math.random() * 9000 + 1000)).current;
@@ -1208,7 +1215,11 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
       // Välj första lediga namnet (inte arr.length) så add/remove inte ger dubbletter.
       const used = new Set(arr.map((s) => s.name));
       const name = SCENARIO_NAMES.find((n) => !used.has(n)) || SCENARIO_NAMES[arr.length];
-      return [...arr, defaultScenario(name)];
+      // Välj första lediga färg-slot så färgerna aldrig krockar efter add/remove.
+      const usedSlots = new Set(arr.map((s) => s.colorSlot));
+      let slot = 0;
+      while (usedSlots.has(slot)) slot++;
+      return [...arr, defaultScenario(name, slot)];
     });
   };
   const removeScenario = (i) => {
@@ -1280,8 +1291,8 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
       }}>
         {computed.map((c, i) => (
           <ScenarioCard
-            key={i}
-            color={C.SCENARIO_PALETTE[i % C.SCENARIO_PALETTE.length]}
+            key={c.scenario.cid}
+            color={C.SCENARIO_PALETTE[c.scenario.colorSlot % C.SCENARIO_PALETTE.length]}
             scenario={c.scenario}
             energy={c.energy}
             rangeKm={c.rangeKm}
@@ -1312,10 +1323,10 @@ function ComparisonStrip({ computed, maxKWh }) {
       }}>Relativ jämförelse · kWh per uttag</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {computed.map((c, i) => {
-          const color = C.SCENARIO_PALETTE[i % C.SCENARIO_PALETTE.length];
+          const color = C.SCENARIO_PALETTE[c.scenario.colorSlot % C.SCENARIO_PALETTE.length];
           const pct = (c.energy.perOutletKWh / maxKWh) * 100;
           return (
-            <div key={i} style={{ display: 'grid', gridTemplateColumns: '110px 1fr 88px', alignItems: 'center', gap: 12 }}>
+            <div key={c.scenario.cid} style={{ display: 'grid', gridTemplateColumns: '110px 1fr 88px', alignItems: 'center', gap: 12 }}>
               <span style={{ fontFamily: I.mono, fontSize: 10, fontWeight: 700, letterSpacing: 1.2, color, textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {c.scenario.name}
               </span>
@@ -1571,7 +1582,7 @@ function Hero({ mode, kWh, rangeKm, car, carId, setCarId, energy, sizing, peakOc
   const primarySub = mode === 'energy'
     ? `${energy.hubs} × ${perHubKW} kW · ${energy.profileLabel || 'Profil'} · peak ${Math.round((energy.peakOccupancyPct ?? peakOcc) * 100)}%`
     : sizing.achievesTarget
-        ? 'når energimålet · marginal finns'
+        ? (sizing.headroomKWh > 0.1 ? 'når energimålet · marginal finns' : 'når energimålet · ingen marginal')
         : (LIMIT_SUB[sizing.limitReason] || 'ej uppnåeligt med vald konfiguration');
 
   const warning = mode === 'hubs' && !sizing.achievesTarget
@@ -1804,14 +1815,19 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
       if (yPeak > 0) {
         for (const p of vals) { if (p.y >= 0.98 * yPeak) { knee = p.x; break; } }
       }
-      const isPowerLimited = knee != null && knee <= 22;
+      // Platå (knät före 23h) = tydligt effektbegränsat → visa markör.
+      const hasPlateau = knee != null && knee <= 22;
+      // Flat/jämn profil ger en LINJÄR kurva (ingen platå) även när systemet är
+      // gravt underdimensionerat. Fånga det via clipping: peakReductionKW > 0
+      // betyder att efterfrågan kapas → effektbegränsat (men ingen knämarkör).
+      const clips = (energy.peakReductionKW || 0) > 0.5;
       return {
         points: vals,
         xLabel: 'Parkeringstid (h)', yLabel: 'kWh / uttag',
         highlightX: parkingHours,
         xTicks: [1, 4, 8, 12, 16, 20, 24],
-        kneeX: isPowerLimited ? knee : null,
-        powerLimited: isPowerLimited,
+        kneeX: hasPlateau ? knee : null,
+        powerLimited: hasPlateau || clips,
       };
     }
     // Hubs mode: steg 1 (inte 5) → highlight träffar alltid exakt; range 1–200 täcker sliderns max (U1-fix)
@@ -1921,7 +1937,9 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
           fontSize: 11.5, lineHeight: 1.5, color: I.ink,
         }}>
           {powerLimited
-            ? <>⚡ <strong>Effektbegränsat.</strong> Hubbarna går maxade nästan hela dygnet. Bortom ~{kneeX} h parkering ger längre tid knappt mer energi per bil. Vill ni leverera mer: <strong>fler SmartHubs eller högre effekt</strong>, inte längre parkeringstid.</>
+            ? (kneeX != null
+                ? <>⚡ <strong>Effektbegränsat.</strong> Hubbarna går maxade nästan hela dygnet. Bortom ~{kneeX} h parkering ger längre tid knappt mer energi per bil. Vill ni leverera mer: <strong>fler SmartHubs eller högre effekt</strong>, inte längre parkeringstid.</>
+                : <>⚡ <strong>Effektbegränsat.</strong> Hubbarna räcker inte för antalet platser, så varje plats får bara en liten andel av effekten. Vill ni leverera mer energi per bil: <strong>fler SmartHubs eller högre effekt</strong>.</>)
             : <>🕓 <strong>Tidsbegränsat.</strong> Systemet har effektmarginal, så <strong>längre parkeringstid ger mer energi</strong> per bil.</>}
         </div>
       )}

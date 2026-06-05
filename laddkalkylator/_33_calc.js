@@ -366,7 +366,8 @@
     // O&M som månadssnitt — typiskt 2-4% av kapital/år (default 3%)
     const monthlyOmCost      = capitalCost * (Number.isFinite(omPctYear) ? omPctYear : 0.03) / 12;
     const monthlyNet         = monthlyRevenue - monthlyOpCost - monthlyOmCost;
-    const paybackMonths      = monthlyNet > 0 ? capitalCost / monthlyNet : null;
+    // capitalCost > 0: utan investering finns ingen meningsfull återbetalningstid (undvik "0 mån").
+    const paybackMonths      = (monthlyNet > 0 && capitalCost > 0) ? capitalCost / monthlyNet : null;
     const paybackYears       = paybackMonths != null ? paybackMonths / 12 : null;
     return {
       capitalCost,

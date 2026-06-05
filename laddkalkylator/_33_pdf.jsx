@@ -734,12 +734,12 @@ function PDFCompare({ data }) {
         gap: 12,
       }}>
         {scenarios.map((sc, i) => {
-          const color = PALETTE[i % PALETTE.length];
+          const color = PALETTE[(sc.colorIndex != null ? sc.colorIndex : i) % PALETTE.length];
           const inp = sc.inputs;
           const out = sc.outputs;
           const isLimited = out.effectiveCap < out.installedCap;
           return (
-            <div key={i} style={{
+            <div key={sc.colorIndex != null ? sc.colorIndex : i} style={{
               border: `1px solid ${BRAND.line}`,
               borderTop: `3px solid ${color}`,
               padding: '12px 12px 14px',
@@ -794,10 +794,10 @@ function PDFCompare({ data }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {scenarios.map((sc, i) => {
-              const color = PALETTE[i % PALETTE.length];
+              const color = PALETTE[(sc.colorIndex != null ? sc.colorIndex : i) % PALETTE.length];
               const pct = (sc.outputs.perOutletKWh / maxKWh) * 100;
               return (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '90px 1fr 70px', alignItems: 'center', gap: 10 }}>
+                <div key={sc.colorIndex != null ? sc.colorIndex : i} style={{ display: 'grid', gridTemplateColumns: '90px 1fr 70px', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontFamily: BRAND.mono, fontSize: 8.5, fontWeight: 700, letterSpacing: 1.1, color, textTransform: 'uppercase' }}>
                     {sc.name}
                   </span>
