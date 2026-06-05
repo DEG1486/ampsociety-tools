@@ -171,7 +171,7 @@ function summarizeInputs(data) {
     { label: 'Mål per plats', value: i.desiredKWhPerOutlet, unit: 'kWh' },
     { label: 'Parkeringstid', value: i.parkingHours, unit: 'h' },
     { label: 'Beläggning', value: Math.round(i.occupancyPct * 100), unit: '%' },
-    { label: 'Systemtak', value: i.systemCap != null ? i.systemCap : '–', unit: 'kW' },
+    { label: 'Systemtak', value: i.systemCap != null ? i.systemCap : 'Obegränsat', unit: i.systemCap != null ? 'kW' : '' },
     { label: 'Referensbil', value: i.carName, unit: '' },
   ];
 }
@@ -423,7 +423,7 @@ function PDFEditorial({ data }) {
 
         {/* CTA block with orange wash */}
         <div style={{
-          margin: '40px 56px 0 56px',
+          margin: '24px 56px 0 56px',
           background: BRAND.accentWash, padding: '32px 32px',
           display: 'grid', gridTemplateColumns: '1fr 112px', gap: 24, alignItems: 'center',
         }}>
@@ -450,7 +450,7 @@ function PDFEditorial({ data }) {
         </div>
 
         {/* Assumptions */}
-        <div style={{ margin: '36px 56px 0 56px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28 }}>
+        <div style={{ margin: '18px 56px 0 56px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28 }}>
           <div>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 8 }}>Antaganden</div>
             <div style={{ fontSize: 10.5, lineHeight: 1.6, color: BRAND.ink2 }}>
@@ -729,7 +729,7 @@ function PDFCompare({ data }) {
       <div style={{
         margin: '28px 56px 0',
         display: 'grid',
-        gridTemplateColumns: `repeat(${Math.min(scenarios.length, 4)}, 1fr)`,
+        gridTemplateColumns: `repeat(${Math.min(scenarios.length, 6)}, 1fr)`,
         gap: 12,
       }}>
         {scenarios.map((sc, i) => {

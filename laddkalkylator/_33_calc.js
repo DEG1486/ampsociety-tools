@@ -161,7 +161,9 @@
       }
       perOutletKWhRaw += normArrivals[t0] * energyForThisStart;
     }
-    const perOutletKWh = perOutletKWhRaw * efficiency;
+    // Vid noll beläggning (sum(hours)=0) levereras ingen energi — håll per-session
+    // konsistent med totalEnergyDay i stället för att visa hwLimit×parkingInt.
+    const perOutletKWh = sum(hours) > 0 ? perOutletKWhRaw * efficiency : 0;
 
     const avgPowerPerActive = outletHoursDay > 0
       ? totalEnergyFromGrid / outletHoursDay
@@ -210,16 +212,20 @@
   // för värsta-falls-peak (alla occ × outlets aktiva samtidigt), vilket ger
   // ett konservativt hubantal. För profil-baserade siffror, se computeEnergy.
   function computeHubs(inp) {
-    const outlets = Math.max(1, inp.outlets);
-    const capPerHub = Math.min(CAP_PER_HUB_KW, Math.max(1, inp.capPerHub ?? CAP_PER_HUB_KW));
-    const hwLimit = inp.hwLimitKW ?? HW_LIMIT_KW;
-    const efficiency = Math.max(0.5, Math.min(1, inp.efficiency ?? DEFAULT_EFFICIENCY));
-    const occ = Math.max(0, Math.min(1, inp.occupancyPct));
-    const parkingH = Math.max(0.5, inp.parkingHours);
+    // Robusthet: alla numeriska indata defaultas om de är undefined/NaN/Infinity
+    // (computeHubs är en återanvändbar pure function på window.Amp5Calc).
+    const num = (v, d) => (Number.isFinite(v) ? v : d);
+    const outlets = Math.max(1, num(inp.outlets, 1));
+    const capPerHub = Math.min(CAP_PER_HUB_KW, Math.max(1, num(inp.capPerHub, CAP_PER_HUB_KW)));
+    const hwLimit = num(inp.hwLimitKW, HW_LIMIT_KW);
+    const efficiency = Math.max(0.5, Math.min(1, num(inp.efficiency, DEFAULT_EFFICIENCY)));
+    const occ = Math.max(0, Math.min(1, num(inp.occupancyPct, 0)));
+    const parkingH = Math.max(0.5, num(inp.parkingHours, 0.5));
+    const desiredKWhPerOutlet = Math.max(0, num(inp.desiredKWhPerOutlet, 0));
     const activeOutlets = outlets * occ;
 
     // Levererad energi target → grid-side power needed = target / η.
-    const powerNeeded = (inp.desiredKWhPerOutlet * activeOutlets) / (parkingH * efficiency);
+    const powerNeeded = (desiredKWhPerOutlet * activeOutlets) / (parkingH * efficiency);
 
     const hubsByOutlets = Math.ceil(outlets / OUTLETS_PER_HUB);
 
@@ -241,7 +247,7 @@
     const actualEnergyRaw = activeOutlets > 0
       ? (effectiveCap * parkingH * efficiency) / activeOutlets
       : 0;
-    const targetEnergy = inp.desiredKWhPerOutlet;
+    const targetEnergy = desiredKWhPerOutlet;
 
     // Bilens AC-laddare klarar max hwLimit grid-side; target/parkingH
     // är levererat, så jämförelsen ska divideras med η.
@@ -252,13 +258,16 @@
 
     const headroomKWh = Math.max(0, actualEnergy - targetEnergy);
     const shortfallKWh = Math.max(0, targetEnergy - actualEnergy);
-    const capacityAchieves = effectiveCap >= powerNeeded - 1e-6;
+    // activeOutlets > 0: vid noll beläggning levereras 0 kWh — då är målet inte "nått".
+    const capacityAchieves = activeOutlets > 0 && effectiveCap >= powerNeeded - 1e-6;
     const achievesTarget = capacityAchieves && hwFeasible;
 
     let limitReason = null;
     if (!achievesTarget) {
       if (!hwFeasible) limitReason = LIMIT_REASON.HW;
-      else if (inp.systemCap != null && hubsByPowerIdeal > maxUsableHubs) limitReason = LIMIT_REASON.SYSTEM_CAP;
+      // Kapacitetsbaserat test: om systemtaket självt ligger under behovet är det
+      // servisen som begränsar (fler hubs hjälper inte), inte hub-konfigurationen.
+      else if (inp.systemCap != null && inp.systemCap < powerNeeded - 1e-6) limitReason = LIMIT_REASON.SYSTEM_CAP;
       else limitReason = LIMIT_REASON.HW_CONFIG;
     }
 

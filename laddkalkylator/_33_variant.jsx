@@ -234,7 +234,7 @@ const LIMIT_SUB = {
   [window.Amp5Calc.LIMIT_REASON.HW_CONFIG]:  'ej uppnåeligt med vald konfiguration',
 };
 const LIMIT_WARNINGS = {
-  [window.Amp5Calc.LIMIT_REASON.HW]:         `Målet kräver högre effekt per bil än fordonens AC-gräns (${window.Amp5Calc.HW_LIMIT_KW} kW). Kortare parkering eller fler uttag krävs.`,
+  [window.Amp5Calc.LIMIT_REASON.HW]:         'Målet kräver högre effekt per bil än fordonets AC-laddartak. Kortare parkering eller fler uttag krävs.',
   [window.Amp5Calc.LIMIT_REASON.SYSTEM_CAP]: 'Fastighetseffekttaket begränsar. Målet kräver servisutökning.',
   [window.Amp5Calc.LIMIT_REASON.HW_CONFIG]:  'Målet uppnås inte med vald tid och beläggning.',
 };
@@ -303,10 +303,16 @@ function InstrumentVariant() {
     setPeakOcc(preset.peakOcc);
     setOccPct(preset.occPct);
   }, []);
-  // fix #3: i enkelt läge sköts hub-antalet automatiskt — nollställ ev. manuellt värde från avancerat
+  // fix #3: i enkelt läge sköts hub-antalet automatiskt — nollställ ev. manuella
+  // avancerat-värden (hubs, kapacitet/hub, fastighetseffekttak) så enkelt läge
+  // alltid räknar på produktstandard och inte tyst ärver dolt avancerat-state.
   const handleSetUiMode = React.useCallback((m) => {
     setUiMode(m);
-    if (m === 'simple') setHubs(null);
+    if (m === 'simple') {
+      setHubs(null);
+      setCapPerHub(C.CAP_PER_HUB_KW);
+      setSystemCap(null);
+    }
   }, []);
   // F1: Elnät (servissäkring 3-fas 400 V + befintlig last)
   const [fuseSizeA, setFuseSizeA] = React.useState(63);
@@ -379,6 +385,20 @@ function InstrumentVariant() {
   }, [mode, energy.totalEnergyDay, energy.peakPowerKW, sizing.kwhPerOutletPerDay, sizing.effectiveCap,
       outlets, occPct, carAcLimit, materialCost, installationCost, electricityPrice, chargingFee, powerTariff, omPctYear]);
 
+  // Effektprofil-graf: i hubs-läge måste grafen räknas på sizing.hubs + occPct
+  // (samma som PDF:en, buildPdfData hubs-grenen) — annars motsäger skärmgrafen
+  // både nyckeltalen bredvid och rapporten (auto-hubs/peakOcc ger fel hub-tak).
+  const chartEnergy = React.useMemo(() => {
+    if (mode === 'energy') return energy;
+    return C.computeEnergy({
+      outlets, hubs: sizing.hubs, capPerHub, systemCap,
+      parkingHours, profileHours: profile.hours,
+      peakOccupancyPct: occPct,
+      hwLimitKW: carAcLimit, efficiency,
+      profileLabel: profile.label,
+    });
+  }, [mode, energy, sizing.hubs, outlets, capPerHub, systemCap, parkingHours, profileKey, occPct, carAcLimit, efficiency]);
+
   const car = C.CARS.find((c) => c.id === carId) || C.CARS[0];
   const heroKWh = mode === 'energy' ? energy.perOutletKWh : sizing.actualEnergyPerOutlet;
   const heroRange = C.rangeKm(heroKWh, car.kwh100);
@@ -438,7 +458,7 @@ function InstrumentVariant() {
       />
       <RightPanel
         mode={mode}
-        energy={energy} sizing={sizing}
+        energy={energy} sizing={sizing} chartEnergy={chartEnergy}
         heroKWh={heroKWh} heroRange={heroRange}
         profile={profile} peakOcc={peakOcc}
         car={car} carId={carId} setCarId={setCarId}
@@ -1174,7 +1194,12 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
   };
   const addScenario = () => {
     if (scenarios.length >= MAX_SCENARIOS) return;
-    setScenarios((arr) => [...arr, defaultScenario(SCENARIO_NAMES[arr.length])]);
+    setScenarios((arr) => {
+      // Välj första lediga namnet (inte arr.length) så add/remove inte ger dubbletter.
+      const used = new Set(arr.map((s) => s.name));
+      const name = SCENARIO_NAMES.find((n) => !used.has(n)) || SCENARIO_NAMES[arr.length];
+      return [...arr, defaultScenario(name)];
+    });
   };
   const removeScenario = (i) => {
     if (scenarios.length <= 1) return;
@@ -1405,7 +1430,7 @@ function CardStat({ label, value, warn }) {
 }
 
 // ───────── Right panel ─────────
-function RightPanel({ mode, energy, sizing, heroKWh, heroRange, profile, peakOcc, car, carId, setCarId, parkingHours, outlets, capPerHub, systemCap, occPct, desiredKWh, profileKey, carAcLimit, efficiency, gridAssessment, economics, perCarPeakKW, uiMode, powerTariff, omPctYear, existingLoadPct, onExportPdf }) {
+function RightPanel({ mode, energy, sizing, chartEnergy, heroKWh, heroRange, profile, peakOcc, car, carId, setCarId, parkingHours, outlets, capPerHub, systemCap, occPct, desiredKWh, profileKey, carAcLimit, efficiency, gridAssessment, economics, perCarPeakKW, uiMode, powerTariff, omPctYear, existingLoadPct, onExportPdf }) {
   const C = window.Amp5Calc;
   const [exporting, setExporting] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
@@ -1448,7 +1473,7 @@ function RightPanel({ mode, energy, sizing, heroKWh, heroRange, profile, peakOcc
       <div className="iv-results-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr)', gap: 32, marginTop: 32 }}>
         <div>
           <SectionTitle title="Effektprofil" hint="Timvis last över dygnet (kW)" />
-          <HourlyChart energy={energy} />
+          <HourlyChart energy={chartEnergy} />
         </div>
         <div>
           <SectionTitle title="Nyckeltal" />
@@ -1531,8 +1556,9 @@ function Hero({ mode, kWh, rangeKm, car, carId, setCarId, energy, sizing, peakOc
     ? <><span>{C.fmt(kWh, { digits: 1 })}</span></>
     : <><span>{sizing.hubs}</span></>;
   // P1-fix: LIMIT_SUB och LIMIT_WARNINGS är nu modulnivåkonstanter (se ovan)
+  const perHubKW = energy.hubs ? Math.round(energy.installedCap / energy.hubs) : C.CAP_PER_HUB_KW;
   const primarySub = mode === 'energy'
-    ? `${energy.hubs} × ${C.CAP_PER_HUB_KW} kW · ${energy.profileLabel || 'Profil'} · peak ${Math.round((energy.peakOccupancyPct ?? peakOcc) * 100)}%`
+    ? `${energy.hubs} × ${perHubKW} kW · ${energy.profileLabel || 'Profil'} · peak ${Math.round((energy.peakOccupancyPct ?? peakOcc) * 100)}%`
     : sizing.achievesTarget
         ? 'når energimålet · marginal finns'
         : (LIMIT_SUB[sizing.limitReason] || 'ej uppnåeligt med vald konfiguration');
@@ -1555,7 +1581,7 @@ function Hero({ mode, kWh, rangeKm, car, carId, setCarId, energy, sizing, peakOc
         }}>
           {primaryValue}
           <span style={{ fontSize: 28, fontWeight: 400, color: I.mute, letterSpacing: -0.5 }}>
-            {mode === 'energy' ? 'kWh' : `×${C.CAP_PER_HUB_KW} kW`}
+            {mode === 'energy' ? 'kWh' : `×${sizing.hubs ? Math.round(sizing.installedCap / sizing.hubs) : C.CAP_PER_HUB_KW} kW`}
           </span>
         </div>
         <div style={{ fontSize: 13, color: warning ? I.accentDeep : I.mute, marginTop: 6, fontFamily: I.mono }}>
@@ -1711,7 +1737,7 @@ function StatList({ mode, energy, sizing }) {
     ['Totalt laddningar / dygn', fmtSessions(energy.totalSessionsPerDay)],
     ['kWh / uttag·dygn',        `${C.fmt(energy.kwhPerOutletPerDay, { digits: 1 })} kWh`],
     ['Snitteffekt / aktivt uttag', `${C.fmt(energy.avgPowerPerActive, { digits: 1 })} kW`],
-    ['SmartHubs',               `${energy.hubs} × ${C.CAP_PER_HUB_KW} kW`],
+    ['SmartHubs',               `${energy.hubs} × ${energy.hubs ? Math.round(energy.installedCap / energy.hubs) : C.CAP_PER_HUB_KW} kW`],
   ] : [
     ['Installerad kapacitet',  `${C.fmt(sizing.installedCap, { digits: 0 })} kW`],
     ['Effektiv kapacitet',      `${C.fmt(sizing.effectiveCap, { digits: 0 })} kW`],
@@ -1749,7 +1775,7 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
   const innerW = width - pad.l - pad.r;
   const innerH = height - pad.t - pad.b;
 
-  const { points, xLabel, yLabel, highlightX, xTicks } = React.useMemo(() => {
+  const { points, xLabel, yLabel, highlightX, xTicks, kneeX, powerLimited } = React.useMemo(() => {
     if (mode === 'energy') {
       const vals = [];
       for (let h = 1; h <= 24; h++) {
@@ -1760,11 +1786,21 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
         });
         vals.push({ x: h, y: e.perOutletKWh });
       }
+      // Knäpunkt: första parkeringstid där kurvan nått ~98% av sitt max → planar ut.
+      // Om knät ligger före 23h är systemet effektbegränsat (mer tid ger ~ingen energi).
+      const yPeak = Math.max(...vals.map((p) => p.y), 0);
+      let knee = null;
+      if (yPeak > 0) {
+        for (const p of vals) { if (p.y >= 0.98 * yPeak) { knee = p.x; break; } }
+      }
+      const isPowerLimited = knee != null && knee <= 22;
       return {
         points: vals,
         xLabel: 'Parkeringstid (h)', yLabel: 'kWh / uttag',
         highlightX: parkingHours,
         xTicks: [1, 4, 8, 12, 16, 20, 24],
+        kneeX: isPowerLimited ? knee : null,
+        powerLimited: isPowerLimited,
       };
     }
     // Hubs mode: steg 1 (inte 5) → highlight träffar alltid exakt; range 1–200 täcker sliderns max (U1-fix)
@@ -1782,6 +1818,7 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
       xLabel: 'Önskad kWh / uttag', yLabel: 'SmartHubs',
       highlightX: Math.round(desiredKWh),
       xTicks: [10, 20, 30, 40, 50, 60, 80, 100, 150, 200], // U1-fix: täcker hela sliderns 1–200 range
+      kneeX: null, powerLimited: false,
     };
   }, [mode, outlets, capPerHub, systemCap, profile, peakOcc, occPct,
       parkingHours, desiredKWh, energy.hubs, energy.perOutletKWh, sizing.hubs,
@@ -1824,6 +1861,19 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
         <path d={`${path} L ${sx(xMax)} ${sy(0)} L ${sx(xMin)} ${sy(0)} Z`} fill={I.accent} opacity="0.08" />
         {/* Line */}
         <path d={path} fill="none" stroke={I.ink} strokeWidth="1.75" />
+        {/* Knä-markör: var systemet blir effektbegränsat */}
+        {kneeX != null && (() => {
+          const atEnd = sx(kneeX) > width - 90;
+          return (
+            <g>
+              <line x1={sx(kneeX)} x2={sx(kneeX)} y1={pad.t} y2={pad.t + innerH} stroke={I.mute} strokeWidth="1" strokeDasharray="2 3" />
+              <text x={sx(kneeX) + (atEnd ? -5 : 5)} y={pad.t + 11} textAnchor={atEnd ? 'end' : 'start'}
+                    fontFamily={I.mono} fontSize={9} fill={I.mute}>
+                Effekttak
+              </text>
+            </g>
+          );
+        })()}
         {/* Highlight */}
         {highlightX != null && (
           <g>
@@ -1852,6 +1902,18 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
         <text x={pad.l} y={height - 4} fontFamily={I.mono} fontSize={10} fill={I.mute}>{xLabel}</text>
         <text x={width - pad.r} y={pad.t - 4} textAnchor="end" fontFamily={I.mono} fontSize={10} fill={I.mute}>{yLabel}</text>
       </svg>
+      {mode === 'energy' && (
+        <div style={{
+          marginTop: 12, padding: '10px 12px', borderRadius: 2,
+          background: powerLimited ? I.accentWash : I.forestWash,
+          borderLeft: `3px solid ${powerLimited ? I.accent : I.forestSoft}`,
+          fontSize: 11.5, lineHeight: 1.5, color: I.ink,
+        }}>
+          {powerLimited
+            ? <>⚡ <strong>Effektbegränsat.</strong> Hubbarna går maxade nästan hela dygnet. Bortom ~{kneeX} h parkering ger längre tid knappt mer energi per bil. Vill ni leverera mer: <strong>fler SmartHubs eller högre effekt</strong>, inte längre parkeringstid.</>
+            : <>🕓 <strong>Tidsbegränsat.</strong> Systemet har effektmarginal, så <strong>längre parkeringstid ger mer energi</strong> per bil.</>}
+        </div>
+      )}
     </div>
   );
 }
