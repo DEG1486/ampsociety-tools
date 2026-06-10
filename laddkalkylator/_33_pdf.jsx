@@ -11,8 +11,8 @@ const PAGE_W = 794;
 const PAGE_H = 1123;
 
 // P2-fix: kontaktuppgifter som konstanter — uppdatera här istället för att söka i koden.
-const CONTACT_EMAIL = 'kontakt@ampsociety.se';
-const CONTACT_PHONE = '+46 8 000 00 00'; // TODO: uppdatera till korrekt nummer
+// Telefonnummer medvetet utelämnat tills ett officiellt nummer finns (Daniel 2026-06-10).
+const CONTACT_EMAIL = 'info@ampsociety.com';
 
 const BRAND = {
   ink: '#272120',
@@ -93,32 +93,57 @@ function PDFFooter({ page, total, date, version }) {
   );
 }
 
-// Simple inline QR — draws a deterministic pixel grid so it "feels" like a QR.
-// Real encoding happens at export time via qrcodejs; this is a visual stand-in.
-function QRPlaceholder({ size = 96, url = 'laddkalkylator.ampsociety.se', className }) {
-  // 21x21 grid (QR v1 footprint). Deterministic pattern from url hash.
-  const N = 21;
-  let hash = 0;
-  for (let i = 0; i < url.length; i++) hash = (hash * 31 + url.charCodeAt(i)) >>> 0;
-  const cells = [];
-  for (let y = 0; y < N; y++) {
-    for (let x = 0; x < N; x++) {
-      // finder patterns (corners)
-      const inFinder = (cx, cy) => (x >= cx && x < cx+7 && y >= cy && y < cy+7 && (x===cx||x===cx+6||y===cy||y===cy+6||(x>=cx+2&&x<cx+5&&y>=cy+2&&y<cy+5)));
-      const f = inFinder(0,0) || inFinder(N-7,0) || inFinder(0,N-7);
-      if (inFinder(0,0) || inFinder(N-7,0) || inFinder(0,N-7)) {
-        cells.push(f);
-        continue;
-      }
-      // pseudo-random content
-      hash = (hash * 1103515245 + 12345 + x * 7 + y * 13) >>> 0;
-      cells.push(((hash >> 8) & 1) === 1);
-    }
-  }
+// Riktig QR-kod, statiskt förgenererad (segno, EC-nivå M, version 4) för
+// QR_URL nedan. URL:en är fast så ingen runtime-encoder behövs — men ändras
+// adressen MÅSTE matrisen genereras om (python: segno.make(url, error='m')).
+// Verifierad avkodningsbar med OpenCV QRCodeDetector 2026-06-10.
+const QR_URL = 'https://deg1486.github.io/ampsociety-tools/';
+const QR_MATRIX = [
+  '111111101101001001111011101111111',
+  '100000100000001101001110101000001',
+  '101110100100001001101110001011101',
+  '101110100000110110000010101011101',
+  '101110101100010000100011101011101',
+  '100000101000010111100100001000001',
+  '111111101010101010101010101111111',
+  '000000000001101100100100100000000',
+  '011111110110100001101001000110001',
+  '101010000000111100111111101101101',
+  '011011101111011010100110011010100',
+  '111111001010101100000100111011111',
+  '010010100100100010110010010111011',
+  '001111000001110110000101001001011',
+  '110111111110011110101010111011010',
+  '001110011011001011111100011101100',
+  '100011101100010000010000010110001',
+  '010011011101000011111001101101101',
+  '000001110011001100000010000110110',
+  '101110010011010011101111011111110',
+  '010000110011100100100010010011001',
+  '110001001100101010010001001000101',
+  '101010101011111110101010010101110',
+  '100101011001100111110100000101111',
+  '100011111011111011101010111110001',
+  '000000001111010110011000100010101',
+  '111111101000010110101011101010110',
+  '100000101000111011000111100011101',
+  '101110101101010001111010111111011',
+  '101110101011100000111101110011001',
+  '101110101101101110100011101101100',
+  '100000101101101000101110001011100',
+  '111111100001101010010011110101010',
+];
+function QRCode({ size = 96, className }) {
+  const N = QR_MATRIX.length;
+  const quiet = 3; // moduler vit marginal (quiet zone) — krävs för skanning mot färgad bakgrund
+  const total = N + quiet * 2;
   return (
-    <div className={className} data-qr style={{ width: size, height: size, background: '#fff', padding: 2, boxSizing: 'border-box' }}>
-      <svg width={size - 4} height={size - 4} viewBox={`0 0 ${N} ${N}`} style={{ display: 'block' }}>
-        {cells.map((on, i) => on ? <rect key={i} x={i % N} y={Math.floor(i / N)} width="1" height="1" fill={BRAND.ink} /> : null)}
+    <div className={className} data-qr style={{ width: size, height: size, background: '#fff', boxSizing: 'border-box' }}>
+      <svg width={size} height={size} viewBox={`0 0 ${total} ${total}`} shapeRendering="crispEdges" style={{ display: 'block' }}>
+        <rect x="0" y="0" width={total} height={total} fill="#fff" />
+        {QR_MATRIX.map((row, y) => row.split('').map((c, x) => (
+          c === '1' ? <rect key={`${y}-${x}`} x={x + quiet} y={y + quiet} width="1" height="1" fill="#000" /> : null
+        )))}
       </svg>
     </div>
   );
@@ -229,32 +254,63 @@ function PowerChart({ hourly, cap, height = 140, width = 682, theme = 'light' })
   );
 }
 
-// Range bar: dots for each outlet, color-intensity = km delivered
+// Range bar: en stapel per plats. Alla platser får samma energi i modellen, så
+// ALLA staplar fylls (granskningsfynd: gamla frac-logiken lämnade alltid ~17 %
+// bleka staplar — lästes som att vissa platser blev utan laddning). Höjden
+// kodar räckvidden mot en fast referens så grafiken är jämförbar mellan rapporter.
 function RangeStrip({ perOutletKm, outlets, width = 682, height = 60 }) {
-  // Up to 80 outlets as discrete dots, then go continuous. Clamp.
   const N = Math.min(outlets, 80);
   const gap = 4;
   const dot = (width - gap * (N - 1)) / N;
-  const maxKm = Math.max(perOutletKm * 1.2, 80);
-  const frac = Math.min(1, perOutletKm / maxKm);
-
+  const REF_KM = 400; // fast skala 0–400 km
+  const frac = Math.max(0.08, Math.min(1, perOutletKm / REF_KM));
+  const h = Math.max(8, height * frac);
   return (
     <div style={{ width }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height }}>
-        {Array.from({ length: N }, (_, i) => {
-          const h = Math.max(6, height * (0.3 + 0.7 * frac));
-          return (
-            <div key={i} style={{
-              width: dot, height: h,
-              background: i < Math.round(N * frac)
-                ? `linear-gradient(180deg, ${BRAND.accent} 0%, ${BRAND.accentDeep} 100%)`
-                : BRAND.accentWash,
-              borderRadius: 1,
-            }} />
-          );
-        })}
+        {Array.from({ length: N }, (_, i) => (
+          <div key={i} style={{
+            width: dot, height: h,
+            background: `linear-gradient(180deg, ${BRAND.accent} 0%, ${BRAND.accentDeep} 100%)`,
+            borderRadius: 1,
+          }} />
+        ))}
       </div>
       {outlets > 80 && <div style={{ fontSize: 9, color: BRAND.mute, marginTop: 4, fontFamily: BRAND.mono }}>× {outlets} platser totalt</div>}
+    </div>
+  );
+}
+
+// Varningar som skärmen visar men rapporten tidigare teg om (granskningsfynd):
+// missat energimål i hubs-läget och trickle-laddning vid samtidig peak.
+// Trösklar/texter delas med UI:t via Amp5Calc (TRICKLE_LIMIT_KW, LIMIT_REASON_LABEL).
+function pdfWarnings(data) {
+  const Amp = window.Amp5Calc;
+  const warns = [];
+  if (data.mode === 'hubs' && data.outputs && data.outputs.achievesTarget === false) {
+    const reason = Amp.LIMIT_REASON_LABEL[data.outputs.limitReason] || 'ej uppnåeligt med vald konfiguration';
+    warns.push(`Energimålet ${Amp.fmt(data.inputs.desiredKWhPerOutlet, { digits: 0 })} kWh/plats nås inte — `
+      + `systemet levererar ${Amp.fmt(data.outputs.actualEnergyPerOutlet, { digits: 1 })} kWh `
+      + `(${Amp.fmt(data.outputs.shortfallKWh, { digits: 1 })} kWh under målet), ${reason}.`);
+  }
+  // Samma undertryckning som UI:t: uppfyllt energibehov = lastbalansering, inte underdimensionering.
+  const needMet = data.mode === 'energy' && data.outputs && data.outputs.needLimited;
+  if (data.perCarPeakKW != null && data.perCarPeakKW < Amp.TRICKLE_LIMIT_KW && !needMet) {
+    warns.push(`Underdimensionerat: vid samtidig topplast får varje laddande bil endast `
+      + `ca ${Amp.fmt(data.perCarPeakKW, { digits: 1 })} kW.`);
+  }
+  return warns;
+}
+
+function PDFWarningStrip({ warns }) {
+  if (!warns.length) return null;
+  return (
+    <div style={{
+      margin: '14px 56px 0 56px', padding: '8px 14px',
+      background: '#FFF3E0', borderLeft: '4px solid #E65100',
+      fontSize: 9.5, lineHeight: 1.5, color: '#5C2E00', fontWeight: 600,
+    }}>
+      {warns.map((w, i) => <div key={i}>⚠ {w}</div>)}
     </div>
   );
 }
@@ -265,6 +321,7 @@ function RangeStrip({ perOutletKm, outlets, width = 682, height = 60 }) {
 
 function PDFEditorial({ data }) {
   const Amp = window.Amp5Calc;
+  const warns = pdfWarnings(data);
   const primary = data.mode === 'energy'
     ? { value: Math.round(data.outputs.perOutletKWh), unit: 'kWh', label: 'Energi per laddtillfälle' }
     : { value: data.outputs.hubs, unit: 'st', label: 'SmartHubs som krävs' };
@@ -325,7 +382,7 @@ function PDFEditorial({ data }) {
             <div style={{ fontFamily: BRAND.serif, fontStyle: 'italic', fontSize: 17, color: BRAND.accentDeep, lineHeight: 1.35, maxWidth: 360 }}>
               {data.mode === 'energy'
                 ? `≈ ${rangeKm} km räckvidd · ${data.inputs.carName}`
-                : `Levererar ${window.Amp5Calc.fmt(data.outputs.actualEnergyPerOutlet, { digits: 0 })} kWh / plats vid full beläggning`}
+                : `Levererar ${window.Amp5Calc.fmt(data.outputs.actualEnergyPerOutlet, { digits: 0 })} kWh / plats vid ${Math.round((data.inputs.occupancyPct || 0) * 100)} % beläggning`}
             </div>
           </div>
           {/* hero image — Amp5 LED detail */}
@@ -391,7 +448,7 @@ function PDFEditorial({ data }) {
           <RangeStrip perOutletKm={rangeKm} outlets={data.inputs.outlets} width={682} />
           <div style={{ height: 10 }} />
           <div style={{ fontSize: 10, color: BRAND.mute, fontFamily: BRAND.mono, letterSpacing: 0.6, textTransform: 'uppercase' }}>
-            En stapel = en plats. Skalas mot er parkering.
+            En stapel = en plats — alla platser får samma energi. Höjd = räckvidd (skala 0–400 km).
           </div>
         </div>
 
@@ -400,15 +457,19 @@ function PDFEditorial({ data }) {
           <GridStatusBadgePDF assessment={data.gridAssessment} />
         )}
 
+        {/* Varningar — samma som skärmen visar (missat mål / trickle) */}
+        <PDFWarningStrip warns={warns} />
+
         {/* Investeringskalkyl (F2) — visas om data finns och kapital > 0 */}
         {data.economics && data.economics.capitalCost > 0 && (
           <EconomicsSectionPDF economics={data.economics} />
         )}
 
-        {/* Environment image — Amp5 exterior parking */}
+        {/* Environment image — Amp5 exterior parking. Lägre när varningsremsan
+            tar plats, så sida 2 aldrig trycker friskrivningen förbi sidslutet. */}
         <div style={{
           margin: '16px 56px 0 56px',
-          height: 130,
+          height: warns.length ? 84 : 130,
           position: 'relative', overflow: 'hidden',
           background: '#0F0C0B',
         }}>
@@ -441,11 +502,11 @@ function PDFEditorial({ data }) {
             </div>
             <div style={{ height: 18 }} />
             <div style={{ fontFamily: BRAND.mono, fontSize: 11, color: BRAND.ink }}>
-              {CONTACT_EMAIL} · {CONTACT_PHONE}
+              {CONTACT_EMAIL}
             </div>
           </div>
           <div>
-            <QRPlaceholder size={112} url="https://laddkalkylator.ampsociety.se" />
+            <QRCode size={112} />
             <div style={{ fontSize: 8, letterSpacing: 1, fontFamily: BRAND.mono, color: BRAND.accentDeep, textAlign: 'center', marginTop: 6, textTransform: 'uppercase', fontWeight: 700 }}>Öppna igen</div>
           </div>
         </div>
@@ -459,16 +520,20 @@ function PDFEditorial({ data }) {
               Beläggningsprofilen <em>{data.inputs.profileLabel}</em> faltas med
               parkeringstidsfönstret och skalas så att profilens topp matchar
               vald topp-beläggning. Per-bil-effekten begränsas av bilens
-              AC-laddartak. Räckvidd beräknas mot WLTP-förbrukning.
+              AC-laddartak.
+              {data.mode === 'energy' && data.inputs.sessionNeedKWh > 0
+                ? <> Varje bil antas behöva högst {data.inputs.sessionNeedKWh} kWh per laddtillfälle.</>
+                : null}
+              {' '}Räckvidd beräknas mot WLTP-förbrukning.
             </div>
           </div>
           <div>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 8 }}>Ansvar & risker</div>
             <div style={{ fontSize: 10.5, lineHeight: 1.6, color: BRAND.ink2 }}>
-              Siffrorna är indikativa (±25%) och ersätter inte projektering eller
-              bindande offert från nätägare. Servisutökning, försäkring, vandalisk-
-              ade kabelstöld och eventuell servisuppgradering omfattas ej.
-              Installation ska utföras av behörig elinstallatör enligt ELSÄK-FS.
+              Siffrorna är indikativa (±25 %) och ersätter inte projektering eller
+              bindande offert från nätägaren. Servisutökning, försäkring,
+              vandalisering och kabelstöld omfattas ej. Installation ska utföras
+              av behörig elinstallatör enligt ELSÄK-FS.
             </div>
           </div>
         </div>
@@ -668,11 +733,11 @@ function PDFTechnical({ data }) {
               tar fram ett förslag som lever upp till er beläggning.
             </div>
             <div style={{ fontFamily: BRAND.mono, fontSize: 10, color: BRAND.ink }}>
-              {CONTACT_EMAIL} · {CONTACT_PHONE}
+              {CONTACT_EMAIL}
             </div>
           </div>
           <div>
-            <QRPlaceholder size={96} url="https://laddkalkylator.ampsociety.se" />
+            <QRCode size={96} />
             <div style={{ fontSize: 7.5, letterSpacing: 1, fontFamily: BRAND.mono, color: BRAND.accentDeep, textAlign: 'center', marginTop: 4, textTransform: 'uppercase', fontWeight: 700 }}>Kalkylator</div>
           </div>
         </div>
@@ -831,7 +896,10 @@ function PDFCompare({ data }) {
             SmartHub: {data.const.capPerHub} kW per enhet, {data.const.outletsPerHub} uttag/hub.
             Bilens AC-tak: {data.const.carAcLimit ?? Amp.HW_LIMIT_KW} kW.
             Verkningsgrad: {Math.round((data.const.efficiency ?? Amp.DEFAULT_EFFICIENCY) * 100)}%.
-            Räckvidd via WLTP-blandad körcykel.
+            {data.const.sessionNeedKWh > 0
+              ? <> Energibehov: {data.const.sessionNeedKWh} kWh/laddtillfälle.</>
+              : null}
+            {' '}Räckvidd via WLTP-blandad körcykel.
           </div>
         </div>
       </div>
@@ -928,10 +996,11 @@ function GridStatusBadgePDF({ assessment }) {
 function EconomicsSectionPDF({ economics }) {
   const Amp = window.Amp5Calc;
   const {
-    capitalCost, materialCost, installationCost,
+    capitalCost, materialCost, installationCost, investmentGrant, netCapitalCost,
     monthlyEnergyCost, monthlyPowerCost, monthlyOmCost,
     monthlyRevenue, monthlyEnergyKWh, paybackYears, paybackMonths,
   } = economics;
+  const hasGrant = (investmentGrant || 0) > 0;
   const hasRevenue = monthlyRevenue > 0;
   // H1: total månadskostnad inkl. effekttariff och O&M (mer realistisk än bara energikostnad)
   const monthlyTotalCost = (monthlyEnergyCost || 0) + (monthlyPowerCost || 0) + (monthlyOmCost || 0);
@@ -945,9 +1014,11 @@ function EconomicsSectionPDF({ economics }) {
   const fmtCapital = (kr) => kr >= 1_000_000
     ? { v: Amp.fmt(kr / 1_000_000, { digits: 1 }), u: 'Mkr' }
     : { v: Amp.fmt(kr / 1000, { digits: 0 }), u: 'kkr' };
-  const capitalFmt = fmtCapital(capitalCost);
+  // Med investeringsstöd visas NETTOT som huvudtal (det kunden faktiskt betalar);
+  // brutto + stöd redovisas i uppdelningsraden under.
+  const capitalFmt = fmtCapital(hasGrant ? netCapitalCost : capitalCost);
   const cols = [
-    { label: 'Investering', v: capitalFmt.v, u: capitalFmt.u },
+    { label: hasGrant ? 'Investering (netto)' : 'Investering', v: capitalFmt.v, u: capitalFmt.u },
     { label: 'Driftkostnad / mån', v: Amp.fmt(monthlyTotalCost, { digits: 0 }), u: 'kr' },
     thirdCol,
   ];
@@ -986,6 +1057,7 @@ function EconomicsSectionPDF({ economics }) {
           {(materialCost || 0) >= 1_000_000 ? `${Amp.fmt(materialCost / 1_000_000, { digits: 1 })} Mkr` : `${Amp.fmt((materialCost || 0) / 1000, { digits: 0 })} kkr`} material
           {' + '}
           {(installationCost || 0) >= 1_000_000 ? `${Amp.fmt(installationCost / 1_000_000, { digits: 1 })} Mkr` : `${Amp.fmt((installationCost || 0) / 1000, { digits: 0 })} kkr`} installation
+          {hasGrant && ` − ${investmentGrant >= 1_000_000 ? `${Amp.fmt(investmentGrant / 1_000_000, { digits: 1 })} Mkr` : `${Amp.fmt(investmentGrant / 1000, { digits: 0 })} kkr`} stöd`}
         </div>
         <div>
           <strong style={{ color: BRAND.ink2 }}>Driftkostnad: </strong>
