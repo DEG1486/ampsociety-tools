@@ -14,7 +14,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     projectName: projectName || '', // U2-fix: tom sträng = ej angivet; PDF visar ej default-strängen
     date: new Date().toLocaleDateString('sv-SE'),
     reportId,
-    version: '3.8',
+    version: '3.8.1',
   };
   const consts = {
     capPerHub, outletsPerHub: C.OUTLETS_PER_HUB,
@@ -126,7 +126,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       projectName: projectName || '', // U2-fix: tom sträng = ej angivet
       date: new Date().toLocaleDateString('sv-SE'),
       reportId,
-      version: '3.8',
+      version: '3.8.1',
     },
   };
 }
@@ -185,13 +185,31 @@ async function exportAsPdf(data) {
   root.render(<Template data={data} />);
 
   await waitForRender(overlay);
-  window.print();
 
-  setTimeout(() => {
+  // Städa när utskriften faktiskt är klar, inte efter en gissad tidsgräns.
+  // Firefox och Safari blockerar inte på print(), så den gamla 1200 ms-rivningen
+  // kunde ta bort overlayen medan förhandsvisningen byggdes — halv eller tom PDF
+  // hos en kollega på Mac. try/catch ser dessutom till att flaggan aldrig fastnar
+  // på true om print() kastar, vilket dödade knappen tyst resten av sessionen
+  // (granskningsfynd G17).
+  let stadad = false;
+  const stada = () => {
+    if (stadad) return;
+    stadad = true;
+    window.removeEventListener('afterprint', stada);
     try { root.unmount(); } catch (_) {}
     try { if (overlay.parentNode) overlay.remove(); } catch (_) {}
     _pdfExporting = false;
-  }, 1200);
+  };
+  window.addEventListener('afterprint', stada);
+  try {
+    window.print();
+  } catch (_) {
+    stada();
+    return;
+  }
+  // Skyddsnät om afterprint aldrig kommer (äldre webbläsare, blockerad dialog).
+  setTimeout(stada, 60000);
 }
 
 // Vänta tills DOM är layoutad, fonts klara och alla bilder dekoderade.
@@ -449,7 +467,12 @@ function InstrumentVariant() {
       scenarios: scenarios.map(({ cid, ...rest }) => rest),
     };
     try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (_) {}
-    try { window.history.replaceState(null, '', '#k=' + encodeCalcState(s)); } catch (_) {}
+    // Delningslänken utelämnar AmpSocietys interna kalkylantaganden. Hashen
+    // hamnar i kundens webbhistorik, i utskriftens sidhuvud och i varje
+    // skärmdelning av adressfältet (granskningsfynd G19) — kostnadsbilden
+    // sparas lokalt men följer inte med länken.
+    const { materialCost: _m, installationCost: _i, omPctYear: _o, investmentGrant: _g, ...delbart } = s;
+    try { window.history.replaceState(null, '', '#k=' + encodeCalcState(delbart)); } catch (_) {}
   }, [mode, uiMode, outlets, hubs, capPerHub, systemCap, parkingHours, profileKey,
       peakOcc, sessionNeedKWh, desiredKWh, occPct, carId, carAcLimit, efficiency, strategy,
       projectName, fuseSizeA, existingLoadPct, materialCost, installationCost,
@@ -474,16 +497,6 @@ function InstrumentVariant() {
   }), [outlets, desiredKWh, parkingHours, occPct, capPerHub, systemCap, carAcLimit, efficiency]);
 
   // F1: Elnätsbedömning — systemets toppeffekt mot serviskapacitet
-  const gridAssessment = React.useMemo(() => {
-    // G1-fix: i hubs-läge ska elnätsbedömningen använda faktisk samtidig topp
-    // (samma realistiska tal som effekttariffen), inte hela installerade hub-kapaciteten.
-    const hubsPeak = Math.min(sizing.effectiveCap, outlets * occPct * carAcLimit);
-    return C.computeGridAssessment({
-      fuseSizeA, existingLoadPct,
-      systemPeakKW: mode === 'energy' ? energy.peakPowerKW : hubsPeak,
-    });
-  }, [fuseSizeA, existingLoadPct, energy.peakPowerKW, sizing.effectiveCap, outlets, occPct, carAcLimit, mode]);
-
   // K4-fix: räkna ut effekt per laddande bil vid samtidig peak — avslöjar "trickle"-scenarier
   // där SmartHub-taket sprids på så många bilar att varje får under 2 kW.
   // I energiläget hämtas talet ur kohortsimuleringen (bilar som mött sitt
@@ -503,6 +516,15 @@ function InstrumentVariant() {
     });
   }, [mode, energy, sizing.hubs, outlets, capPerHub, systemCap, parkingHours, profileKey, occPct, desiredKWh, carAcLimit, efficiency, strategy]);
 
+  // EN toppeffekt för hela rapporten. Tidigare fick elnätsbedömningen ett eget
+  // hubsPeak i hubs-läget medan ekonomin läste profilmodellen — samma anläggning
+  // kunde då få "OK" i ett läge och "Servisutökning krävs" i det andra
+  // (granskningsfynd G7). Deklareras EFTER chartEnergy: const→var gör att en
+  // hook som läser en senare variabel får undefined i deps.
+  const gridAssessment = React.useMemo(() => C.computeGridAssessment({
+    fuseSizeA, existingLoadPct, systemPeakKW: chartEnergy.peakPowerKW,
+  }), [fuseSizeA, existingLoadPct, chartEnergy.peakPowerKW]);
+
   // Effekt per LADDANDE bil vid samtidig topp kommer nu ur kohortsimuleringen i
   // båda lägena. Tidigare räknade hubs-läget effekttak / antal närvarande, vilket
   // gav värden under 6 A — en effekt Amp5 aldrig levererar (handbok 8.3.1).
@@ -517,15 +539,24 @@ function InstrumentVariant() {
     electricityPrice, chargingFee,
     totalEnergyDay: chartEnergy.totalEnergyDay,
     gridEnergyDay: chartEnergy.totalEnergyFromGrid,
-    powerTariff, peakPowerKW: chartEnergy.peakPowerKW, omPctYear: omPctYear / 100,
+    // Effektavgiften debiteras på abonnemangspunktens uppmätta topp, alltså
+    // laddningen OVANPÅ fastighetens befintliga last — inte laddningen isolerat.
+    // Utan grundlasten underskattades avgiften med 20 % i defaultfallet (G8).
+    powerTariff, peakPowerKW: chartEnergy.peakPowerKW + (gridAssessment.existingKW || 0),
+    omPctYear: omPctYear / 100,
     daysPerMonth: activeDaysPerMonth ?? profile.daysPerMonth ?? 30,
     investmentGrant,
   }), [chartEnergy.totalEnergyDay, chartEnergy.totalEnergyFromGrid, chartEnergy.peakPowerKW,
+      gridAssessment.existingKW,
       materialCost, installationCost, electricityPrice, chargingFee,
       powerTariff, omPctYear, activeDaysPerMonth, profileKey, investmentGrant]);
 
   const car = C.CARS.find((c) => c.id === carId) || C.CARS[0];
-  const heroKWh = mode === 'energy' ? energy.perOutletKWh : sizing.actualEnergyPerOutlet;
+  // actualEnergyPerOutlet är ett KAPACITETSTAK — vad anläggningen skulle kunna
+  // leverera per uttag. Bilen tar inte emot mer än sitt mål, så det talet får
+  // aldrig presenteras som levererad energi eller räckvidd: det överdrev
+  // kundrapportens största siffra med upp till 86 % (granskningsfynd G1).
+  const heroKWh = mode === 'energy' ? energy.perOutletKWh : sizing.deliveredEnergyPerOutlet;
   const heroRange = C.rangeKm(heroKWh, car.kwh100);
 
   if (mode === 'compare') {
@@ -667,7 +698,11 @@ function LeftPanel(p) {
         {!isSimple && p.mode === 'energy' && (
           <NumberField label="Antal SmartHubs" value={p.hubs ?? p.autoHubs}
             onChange={p.setHubs} min={1} max={20} suffix="hubs" optional
-            hint={p.hubs == null ? `Auto (max ${C.OUTLETS_PER_HUB} uttag/hub)` : null}
+            hint={p.hubs == null
+              ? `Auto (max ${C.OUTLETS_PER_HUB} uttag/hub)`
+              : (p.hubs * C.OUTLETS_PER_HUB < p.outlets
+                  ? `⚠ ${p.outlets} uttag kräver minst ${Math.ceil(p.outlets / C.OUTLETS_PER_HUB)} hubbar (${C.OUTLETS_PER_HUB} uttag/hub)`
+                  : null)}
             onReset={p.hubs != null ? () => p.setHubs(null) : null} />
         )}
         {p.mode === 'hubs' && (
@@ -711,7 +746,7 @@ function LeftPanel(p) {
           {p.mode === 'energy' && (
             <SliderField label="Peak-beläggning" value={Math.round(p.peakOcc*100)}
               onChange={(v) => p.setPeakOcc(v/100)} min={5} max={100} step={1} suffix="%"
-              hint="Skalar profilen så toppen når detta värde. Parkeringstiden smetar ut kurvan — faktisk beläggning kan bli jämnare än profilen." />
+              hint="Profilens toppvärde. Parkeringstiden smetar ut närvarokurvan, så den faktiska toppen kan bli lägre — antalet bilplatstimmar per dygn hålls däremot fast." />
           )}
           {p.mode === 'energy' && (
             <NumberField label="Energibehov per bil" value={p.sessionNeedKWh}
@@ -1231,7 +1266,11 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh1
   const queueShare = present > 0.5 ? queued / present : 0;
   // Kö är normalt och helt i sin ordning så länge bilarna hinner få sin energi.
   // Överskottsvarningen säger allt kövarningen skulle sagt, och mer — visa inte båda.
-  const showQueueWarn = !needMet && queueShare > 0.4 && charging > 0 && overflow <= 0.5;
+  // Utan angivet energibehov finns inget behov att missa — då är kö bara
+  // lastbalansering, inte underdimensionering. Tidigare påstod varningen att
+  // bilarna inte nådde ett behov användaren aldrig angett (granskningsfynd G4).
+  const harBehov = queue ? queue.sessionNeedKWh != null : false;
+  const showQueueWarn = harBehov && !needMet && queueShare > 0.4 && charging > 0 && overflow <= 0.5;
   const rows = [
     ['Serviseffekt (√3 × 400 V × A)', `${C.fmt(servisKW, { digits: 0 })} kW`],
     ['Befintlig last',                 `${C.fmt(existingKW, { digits: 0 })} kW`],
@@ -1289,7 +1328,10 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh1
             ⚠️ <strong>Fler bilar än SmartHuben kan ta sessioner för:</strong> vid topp står{' '}
             <strong>{C.fmt(overflow, { digits: 0 })} bilar</strong> utan laddsession
             ({C.fmt(queue.maxPresent, { digits: 0 })} närvarande mot taket {queue.sessionCapacity}).
-            En SmartHub kör max {C.MAX_SESSIONS_PER_HUB} simultana sessioner — lägg till en SmartHub.
+            En SmartHub kör max {C.MAX_SESSIONS_PER_HUB} simultana sessioner — lägg till{' '}
+            {queue.hubsNeededForSessions > 1
+              ? `${queue.hubsNeededForSessions} SmartHubs till`
+              : 'en SmartHub till'}.
           </div>
         )}
         {showQueueWarn && (
@@ -1718,7 +1760,7 @@ function RightPanel({ mode, energy, sizing, chartEnergy, heroKWh, heroRange, pro
   const handleCopy = () => {
     const kWh = mode === 'energy'
       ? `${C.fmt(energy.perOutletKWh, { digits: 1 })} kWh/uttag · ${C.fmt(heroRange, { digits: 0 })} km räckvidd`
-      : `${sizing.hubs} SmartHubs · ${C.fmt(sizing.actualEnergyPerOutlet, { digits: 1 })} kWh/uttag`;
+      : `${sizing.hubs} SmartHubs · ${C.fmt(sizing.deliveredEnergyPerOutlet, { digits: 1 })} kWh/uttag`;
     navigator.clipboard?.writeText(kWh).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
@@ -1837,7 +1879,7 @@ function Hero({ mode, kWh, rangeKm, car, carId, setCarId, energy, sizing, peakOc
   // P1-fix: LIMIT_SUB och LIMIT_WARNINGS är nu modulnivåkonstanter (se ovan)
   const perHubKW = energy.hubs ? Math.round(energy.installedCap / energy.hubs) : C.CAP_PER_HUB_KW;
   const primarySub = mode === 'energy'
-    ? `${energy.hubs} × ${perHubKW} kW · ${energy.profileLabel || 'Profil'} · peak ${Math.round((energy.peakOccupancyPct ?? peakOcc) * 100)}%${energy.needLimited ? ' · behovet uppfylls' : ''}`
+    ? `${energy.hubs} × ${perHubKW} kW · ${energy.profileLabel || 'Profil'} · faktisk topp ${Math.round((energy.peakOccupancyPct ?? peakOcc) * 100)} % beläggning${energy.needLimited ? ' · behovet uppfylls' : ''}`
     : sizing.achievesTarget
         ? (sizing.headroomKWh > 0.1 ? 'når energimålet · marginal finns' : 'når energimålet · ingen marginal')
         : (LIMIT_SUB[sizing.limitReason] || 'ej uppnåeligt med vald konfiguration');
@@ -2219,14 +2261,70 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
             : powerLimited
             ? (kneeX != null && !kneeNeedBound
                 ? <>⚡ <strong>Effektbegränsat.</strong> Hubbarna går maxade nästan hela dygnet. Bortom ~{kneeX} h parkering ger längre tid knappt mer energi per bil. Vill ni leverera mer: <strong>fler SmartHubs eller högre effekt</strong>, inte längre parkeringstid.</>
-                : <>⚡ <strong>Effektbegränsat.</strong> Hubbarna räcker inte för antalet platser, så varje plats får bara en liten andel av effekten. Vill ni leverera mer energi per bil: <strong>fler SmartHubs eller högre effekt</strong>.</>)
-            : <>🕓 <strong>Tidsbegränsat.</strong> Systemet har effektmarginal, så <strong>längre parkeringstid ger mer energi</strong> per bil{kneeNeedBound && kneeX != null ? <> — upp till behovet ({C.fmt(sessionNeedKWh, { digits: 0 })} kWh) som nås vid ~{kneeX} h</> : null}.</>}
+                : <>⚡ <strong>Effektbegränsat.</strong> Hubbarna räcker inte för antalet platser. Effekten delas inte ut jämnt — de bilar som ryms får full startström och resten står i kö tills kapacitet frigörs. Vill ni leverera mer energi per bil: <strong>fler SmartHubs eller högre effekt</strong>.</>)
+            : <>🕓 <strong>Tidsbegränsat.</strong> Systemet har effektmarginal, så <strong>längre parkeringstid ger i huvudsak mer energi</strong> per bil{kneeNeedBound && kneeX != null ? <> — upp till behovet ({C.fmt(sessionNeedKWh, { digits: 0 })} kWh) som nås vid ~{kneeX} h</> : null}. Kurvan kan svaja några procent mellan enskilda timmar: ankomstmönstret som härleds ur profilen är inte entydigt, och var bilarna hamnar i dygnet påverkar hur mycket av effekten som hinner användas.</>}
         </div>
       )}
     </div>
   );
 }
 
-Object.assign(window, { InstrumentVariant });
+// Felgräns. Utan den blev ett renderingsfel permanent: starttillståndet läses
+// tillbaka ur URL-hash och localStorage, så en omladdning återskapade exakt det
+// tillstånd som kraschade, och länken spred felet vidare (granskningsfynd G18).
+class Felgrans extends React.Component {
+  constructor(props) { super(props); this.state = { fel: null }; }
+  static getDerivedStateFromError(fel) { return { fel }; }
+  componentDidCatch(fel, info) { console.error('Laddkalkylatorn kraschade:', fel, info); }
+  aterstall() {
+    try { localStorage.removeItem(STORE_KEY); } catch (_) {}
+    try { window.history.replaceState(null, '', window.location.pathname); } catch (_) {}
+    window.location.reload();
+  }
+  render() {
+    if (!this.state.fel) return this.props.children;
+    return (
+      <div style={{
+        minHeight: '100vh', background: I.bg, color: I.ink, fontFamily: I.sans,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32,
+      }}>
+        <div style={{ maxWidth: 520 }}>
+          <div style={{ fontFamily: I.mono, fontSize: 10, letterSpacing: 1.6, textTransform: 'uppercase', color: I.accentDeep, marginBottom: 12 }}>
+            Något gick fel
+          </div>
+          <div style={{ fontFamily: I.serif, fontSize: 32, fontWeight: 500, letterSpacing: -0.5, marginBottom: 14 }}>
+            Kalkylatorn kunde inte visas
+          </div>
+          <p style={{ fontSize: 14, lineHeight: 1.6, color: I.ink2, marginBottom: 20 }}>
+            Den sparade kalkylen kan vara skadad. Börja om med tomma värden —
+            dina inmatningar rensas, men inget annat påverkas.
+          </p>
+          <button onClick={() => this.aterstall()} style={{
+            background: I.ink, color: I.bg, border: `1px solid ${I.ink}`,
+            padding: '10px 18px', borderRadius: 2, cursor: 'pointer',
+            fontFamily: I.mono, fontSize: 11, letterSpacing: 1.2, textTransform: 'uppercase',
+          }}>Börja om</button>
+          <pre style={{
+            marginTop: 22, fontSize: 10.5, fontFamily: I.mono, color: I.mute,
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          }}>{String(this.state.fel && this.state.fel.message || this.state.fel)}</pre>
+        </div>
+      </div>
+    );
+  }
+}
+
+// Bundlens filer kors i global scope, dar en top-level function-deklaration
+// OCKSA blir en window-egenskap. Namnet maste darfor fangas i en const (som
+// inte skapar nagon window-egenskap) innan window.InstrumentVariant skrivs
+// over — annars pekar identifieraren i wrappern pa wrappern sjalv och
+// renderingen blir oandlig rekursion.
+const InstrumentVariantKarna = InstrumentVariant;
+
+function InstrumentVariantMedFelgrans() {
+  return <Felgrans><InstrumentVariantKarna /></Felgrans>;
+}
+
+Object.assign(window, { InstrumentVariant: InstrumentVariantMedFelgrans });
 
 

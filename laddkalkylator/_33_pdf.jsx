@@ -351,9 +351,12 @@ function PDFEditorial({ data }) {
     ? { value: Math.round(data.outputs.perOutletKWh), unit: 'kWh', label: 'Energi per laddtillfälle' }
     : { value: data.outputs.hubs, unit: 'st', label: 'SmartHubs som krävs' };
 
-  const rangeKm = data.mode === 'energy'
-    ? Math.round((data.outputs.perOutletKWh / data.inputs.carKwh100) * 100)
-    : Math.round((data.outputs.actualEnergyPerOutlet / data.inputs.carKwh100) * 100);
+  // Levererad energi, aldrig kapacitetstaket — och via Amp5Calc.rangeKm så att
+  // bilens laddförlust dras av på samma sätt som på skärmen (G1, C2).
+  const levereratKWh = data.mode === 'energy'
+    ? data.outputs.perOutletKWh
+    : data.outputs.deliveredEnergyPerOutlet;
+  const rangeKm = Math.round(window.Amp5Calc.rangeKm(levereratKWh, data.inputs.carKwh100));
 
   const inputs = summarizeInputs(data);
 
@@ -407,7 +410,7 @@ function PDFEditorial({ data }) {
             <div style={{ fontFamily: BRAND.serif, fontStyle: 'italic', fontSize: 17, color: BRAND.accentDeep, lineHeight: 1.35, maxWidth: 360 }}>
               {data.mode === 'energy'
                 ? `≈ ${rangeKm} km räckvidd · ${data.inputs.carName}`
-                : `Levererar ${window.Amp5Calc.fmt(data.outputs.actualEnergyPerOutlet, { digits: 0 })} kWh / plats vid ${Math.round((data.inputs.occupancyPct || 0) * 100)} % beläggning`}
+                : `Levererar ${window.Amp5Calc.fmt(levereratKWh, { digits: 0 })} kWh / plats vid ${Math.round((data.inputs.occupancyPct || 0) * 100)} % beläggning`}
             </div>
           </div>
           {/* hero image — Amp5 LED detail */}
@@ -484,8 +487,9 @@ function PDFEditorial({ data }) {
           <RangeStrip perOutletKm={rangeKm} outlets={data.inputs.outlets} width={682} />
           <div style={{ height: 10 }} />
           <div style={{ fontSize: 10, color: BRAND.mute, fontFamily: BRAND.mono, letterSpacing: 0.6, textTransform: 'uppercase' }}>
-            En stapel = en plats. Höjd = modellens genomsnittliga räckvidd per plats (skala 0–400 km).
-            Faktisk fördelning mellan bilar styrs av lastbalanseringens prioritetsordning.
+            En stapel = en plats. Staplarna visar modellens genomsnitt per plats, inte
+            enskilda bilar — faktisk fördelning styrs av lastbalanseringens prioritetsordning.
+            Höjden är avkortad under 53 km och över 400 km; läs värdet i siffran ovan.
           </div>
         </div>
 
@@ -569,7 +573,8 @@ function PDFEditorial({ data }) {
               {data.mode === 'energy' && data.inputs.sessionNeedKWh > 0
                 ? <> Varje bil antas behöva högst {data.inputs.sessionNeedKWh} kWh per laddtillfälle.</>
                 : null}
-              {' '}Räckvidd beräknas mot WLTP-förbrukning.
+              {' '}Räckvidd beräknas mot WLTP-förbrukning med avdrag för fordonets
+              laddförlust. Vintertid räkna 20–40 % högre energiåtgång per km.
             </div>
           </div>
           <div>
@@ -736,9 +741,10 @@ function PDFTechnical({ data }) {
               och faltas med parkeringstidsfönstret. Resultatet skalas så att
               <em> topp</em>-beläggningen matchar slidervärdet; faltningen kan ge
               en jämnare kurva än profilen. Effekten per aktiv bil är
-              <em> min(P<sub>bil</sub>, P<sub>eff</sub> / n<sub>aktiv</sub>)</em>
-              tills bilens energibehov är mött, där P<sub>bil</sub> är
-              AC-laddartaket och P<sub>eff</sub> är min(installerad effekt, systemtak).
+              enligt Amp5:s lastbalansering: startström i prioritetsordning tills
+              kapaciteten är förbrukad, resten köar, och inget fordon laddar under
+              6 A. Antalet bilar som laddar samtidigt är därför
+              <em> P<sub>eff</sub> / P<sub>start</sub></em>, inte alla närvarande.
             </div>
           </div>
           <div>
@@ -947,8 +953,8 @@ function PDFCompare({ data }) {
             Ankomsterna rekonstrueras ur beläggningsprofilen (dekonvolution) och
             faltas med parkeringstidsfönstret. Resultatet skalas så att
             <em> topp</em>-beläggningen matchar slidervärdet. Effekten per aktiv bil är
-            <em> min(P<sub>bil</sub>, P<sub>eff</sub>/n<sub>aktiv</sub>)</em> tills
-            energibehovet är mött.
+            startström i prioritetsordning tills kapaciteten är förbrukad; resten
+            köar. Inget fordon laddar under 6 A.
           </div>
         </div>
         <div>
@@ -961,7 +967,8 @@ function PDFCompare({ data }) {
             {data.const.sessionNeedKWh > 0
               ? <> Energibehov: {data.const.sessionNeedKWh} kWh/laddtillfälle.</>
               : null}
-            {' '}Räckvidd via WLTP-blandad körcykel.
+            {' '}Räckvidd via WLTP-blandad körcykel med avdrag för fordonets
+            laddförlust; vintertid 20–40 % högre åtgång.
           </div>
         </div>
       </div>
@@ -1068,10 +1075,13 @@ function EconomicsSectionPDF({ economics }) {
   // H1: total månadskostnad inkl. effekttariff och O&M (mer realistisk än bara energikostnad)
   const monthlyTotalCost = (monthlyEnergyCost || 0) + (monthlyPowerCost || 0) + (monthlyOmCost || 0);
   // Tredje kolumn: återbetalningstid om möjlig, annars intäkt om satt, annars energi/mån
+  // Går kalkylen med förlust ska rapporten säga det lika tydligt som skärmen —
+  // tidigare byttes kolumnen tyst mot intäkt eller energi (granskningsfynd G10).
+  const gorForlust = hasRevenue && paybackYears == null;
   const thirdCol = hasRevenue && paybackYears != null
     ? { label: 'Återbetalning (enkel)', v: paybackYears < 1 ? `${Math.round(paybackMonths)}` : Amp.fmt(paybackYears, { digits: 1 }), u: paybackYears < 1 ? 'mån' : 'år' }
-    : hasRevenue
-      ? { label: 'Intäkt / månad', v: Amp.fmt(monthlyRevenue, { digits: 0 }), u: 'kr' }
+    : gorForlust
+      ? { label: 'Återbetalning', v: 'Ingen', u: '', warn: true }
       : { label: 'Energi / månad', v: Amp.fmt(monthlyEnergyKWh, { digits: 0 }), u: 'kWh' };
 
   const fmtCapital = (kr) => kr >= 1_000_000
@@ -1101,7 +1111,7 @@ function EconomicsSectionPDF({ economics }) {
             <div style={{ fontSize: 9, letterSpacing: 1.2, textTransform: 'uppercase', color: BRAND.mute, fontWeight: 700, marginBottom: 6 }}>
               {m.label}
             </div>
-            <div style={{ fontFamily: BRAND.serif, fontSize: 26, fontWeight: 500, letterSpacing: -0.5, lineHeight: 1 }}>
+            <div style={{ fontFamily: BRAND.serif, fontSize: m.warn ? 20 : 26, fontWeight: 500, letterSpacing: -0.5, lineHeight: 1, color: m.warn ? '#C62828' : BRAND.ink }}>
               {m.v}
               <span style={{ fontFamily: BRAND.sans, fontSize: 10, color: BRAND.mute, fontWeight: 400, marginLeft: 4, letterSpacing: 1, textTransform: 'uppercase' }}>
                 {m.u}
@@ -1138,7 +1148,9 @@ function EconomicsSectionPDF({ economics }) {
         {' '}{Amp.fmt(daysPerMonth || 30, { digits: 0 })} laddningsdagar/mån ·
         {' '}{Amp.fmt(monthlyEnergyKWh || 0, { digits: 0 })} kWh levererat/mån
         {hasRevenue ? ` · intäkt ${Amp.fmt(monthlyRevenue, { digits: 0 })} kr/mån` : ''}.
-        {' '}Priser exkl. moms. Återbetalningstiden är enkel och odiskonterad.
+        {' '}Priser exkl. moms. Återbetalningstiden är enkel och odiskonterad och
+        omfattar inte kostnad för eventuell servisutökning.
+        {gorForlust ? ' Med angivna priser går driften med förlust — investeringen återbetalar sig inte.' : ''}
       </div>
     </div>
   );
@@ -1178,7 +1190,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.8',
+      version: '3.8.1',
     },
   };
 }
