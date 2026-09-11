@@ -14,7 +14,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     projectName: projectName || '', // U2-fix: tom sträng = ej angivet; PDF visar ej default-strängen
     date: new Date().toLocaleDateString('sv-SE'),
     reportId,
-    version: '3.8.1',
+    version: '3.8.2',
   };
   const consts = {
     capPerHub, outletsPerHub: C.OUTLETS_PER_HUB,
@@ -126,7 +126,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       projectName: projectName || '', // U2-fix: tom sträng = ej angivet
       date: new Date().toLocaleDateString('sv-SE'),
       reportId,
-      version: '3.8.1',
+      version: '3.8.2',
     },
   };
 }
@@ -746,7 +746,7 @@ function LeftPanel(p) {
           {p.mode === 'energy' && (
             <SliderField label="Peak-beläggning" value={Math.round(p.peakOcc*100)}
               onChange={(v) => p.setPeakOcc(v/100)} min={5} max={100} step={1} suffix="%"
-              hint="Profilens toppvärde. Parkeringstiden smetar ut närvarokurvan, så den faktiska toppen kan bli lägre — antalet bilplatstimmar per dygn hålls däremot fast." />
+              hint="Profilens toppvärde. Med lång parkeringstid blir närvarokurvan jämnare än profilen — en bil som står nio timmar kan inte ge en skarpare topp än så. Antalet bilplatstimmar per dygn hålls fast." />
           )}
           {p.mode === 'energy' && (
             <NumberField label="Energibehov per bil" value={p.sessionNeedKWh}
@@ -2262,7 +2262,7 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
             ? (kneeX != null && !kneeNeedBound
                 ? <>⚡ <strong>Effektbegränsat.</strong> Hubbarna går maxade nästan hela dygnet. Bortom ~{kneeX} h parkering ger längre tid knappt mer energi per bil. Vill ni leverera mer: <strong>fler SmartHubs eller högre effekt</strong>, inte längre parkeringstid.</>
                 : <>⚡ <strong>Effektbegränsat.</strong> Hubbarna räcker inte för antalet platser. Effekten delas inte ut jämnt — de bilar som ryms får full startström och resten står i kö tills kapacitet frigörs. Vill ni leverera mer energi per bil: <strong>fler SmartHubs eller högre effekt</strong>.</>)
-            : <>🕓 <strong>Tidsbegränsat.</strong> Systemet har effektmarginal, så <strong>längre parkeringstid ger i huvudsak mer energi</strong> per bil{kneeNeedBound && kneeX != null ? <> — upp till behovet ({C.fmt(sessionNeedKWh, { digits: 0 })} kWh) som nås vid ~{kneeX} h</> : null}. Kurvan kan svaja några procent mellan enskilda timmar: ankomstmönstret som härleds ur profilen är inte entydigt, och var bilarna hamnar i dygnet påverkar hur mycket av effekten som hinner användas.</>}
+            : <>🕓 <strong>Tidsbegränsat.</strong> Systemet har effektmarginal, så <strong>längre parkeringstid ger i huvudsak mer energi</strong> per bil{kneeNeedBound && kneeX != null ? <> — upp till behovet ({C.fmt(sessionNeedKWh, { digits: 0 })} kWh) som nås vid ~{kneeX} h</> : null}.</>}
         </div>
       )}
     </div>

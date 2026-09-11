@@ -208,53 +208,45 @@
     // parkingInt cappas till 24 så presence-faltningen inte wrappar dygnet flera varv.
     const parkingInt = Math.min(24, Math.max(1, Math.round(num(inp.parkingHours, 1))));
 
-    // Ankomstrekonstruktion via dekonvolution mot profilnivån. Profilen säger
-    // hur många bilar som STÅR där varje timme; parkeringstiden hur länge en
-    // bil står. arrivals[t] sätts så att summan av ännu närvarande ankomster
-    // når profilens nivå: Σ arrivals[t−parkingInt+1 .. t] ≈ profile[t].
-    // (Fix: tidigare gradientmodell gav noll ankomster på platåer/fallande
-    // flank — anläggningen "tömdes" parkingInt timmar efter sista stigningen,
-    // t.ex. köpcentrum tomt kl 19-23 och BRF-garage tomt kl 03-05.)
-    // Startgissning: profilnivån likformigt fördelad över fönstret — exakt
-    // fixpunkt för platta profiler. Dämpad uppdatering (0,5-mix) krävs:
-    // odämpad Gauss-Seidel oscillerar med period 2 när parkingInt inte delar
-    // 24 (ger paritetsberoende energi och hål i beläggningen). Avbryt när
-    // lösningen är stabil. Där profilen faller brantare än bilarna hinner
-    // lämna ligger närvaron kvar över profilen — fysiskt korrekt: en bil
-    // står minst parkingInt timmar.
-    // Defensiv: alla numeriska fält defaultas ovan, men profileHours
-    // derefererades oskyddat och gav en hård TypeError som kraschade hela
-    // appen — och eftersom tillståndet läses tillbaka ur URL-hashen blev
+    // --- Ankomstmodell: likformig omsattning ------------------------------
+    // Profilen sager hur manga bilar som STAR dar varje timme; parkeringstiden
+    // hur lange en bil star. Tidigare loste vi ankomsterna ur narvaron genom
+    // dekonvolution. Den ekvationen ar underbestamd — a(t) = a(t-L) + delta-o(t)
+    // har lika manga frihetsgrader som gcd(L, 24) — och den strukturen hoppar
+    // DISKONTINUERLIGT nar parkeringstiden andras. Losningen valde da olika
+    // ankomstmonster for olika L, vilket fick dygnsenergin att saga 11-14 %
+    // mellan tva granntimmar pa reglaget och kanslighetskurvan att dippa dar
+    // texten lovade att den steg (granskningsfynd B3/G3).
+    //
+    // Nu parametriseras ankomsterna direkt i stallet: av de bilar som star dar
+    // en viss timme anlande en andel 1/L just da. Det ger ankomster som ar
+    // icke-negativa per konstruktion, slata, och en KONTINUERLIG funktion av L.
+    //
+    // Fonstret centreras: en bil som star kvar L timmar och bidrar till
+    // narvaron kring timme t anlande i snitt (L-1)/2 timmar tidigare. Utan den
+    // forskjutningen hamnade kontorets narvarotopp kl 16 i stallet for kl 9.
+    //
+    // Priset ar att narvaron blir profilen utsmetad av parkeringsfonstret i
+    // stallet for att traffa den exakt. Det ar fysiskt korrekt: med nio timmars
+    // parkering KAN belaggningen inte ha skarpare drag an sa. Modellen gar
+    // kontinuerligt fran exakt (L = 1) till helt jamn (L = 24).
+    //
+    // Defensiv: alla numeriska falt defaultas ovan, men profileHours
+    // derefererades oskyddat och gav en hard TypeError som kraschade hela
+    // appen — och eftersom tillstandet lases tillbaka ur URL-hashen blev
     // kraschen permanent (granskningsfynd G18).
     const profile = (Array.isArray(inp.profileHours) && inp.profileHours.length === 24
       && inp.profileHours.every((v) => Number.isFinite(v)))
       ? inp.profileHours
       : new Array(24).fill(0.5);
-    const arrivals = profile.map((p) => p / parkingInt);
-    for (let pass = 0; pass < 60; pass++) {
-      let maxDelta = 0;
-      for (let t = 0; t < 24; t++) {
-        let stillPresent = 0;
-        for (let dh = 1; dh < parkingInt; dh++) {
-          stillPresent += arrivals[(t - dh + 24) % 24];
-        }
-        const next = 0.5 * arrivals[t] + 0.5 * Math.max(0, profile[t] - stillPresent);
-        maxDelta = Math.max(maxDelta, Math.abs(next - arrivals[t]));
-        arrivals[t] = next;
-      }
-      // Regularisering. Dekonvolutionen är underbestämd: när profilen har ett
-      // lågt nattgolv finns många ankomstmönster som förklarar den lika bra,
-      // och den odämpade lösningen lägger hela nattbehovet i EN godtycklig
-      // timme vars läge hoppar med parkeringstiden. Det gjorde dygnsenergin
-      // instabil mot parkeringsreglaget. Ett lätt utjämningssteg väljer den
-      // jämnaste av de likvärdiga lösningarna — minst antagande om något vi
-      // inte vet — utan att försämra träffen mot profilens form.
-      const kopia = arrivals.slice();
-      for (let t = 0; t < 24; t++) {
-        arrivals[t] = 0.25 * kopia[(t + 23) % 24] + 0.5 * kopia[t] + 0.25 * kopia[(t + 1) % 24];
-      }
-      if (maxDelta < 1e-9) break;
-    }
+    const skift = (parkingInt - 1) / 2;
+    const skiftHel = Math.floor(skift);
+    const skiftDel = skift - skiftHel;
+    const arrivals = profile.map((p, t) => {
+      const a = profile[(t + skiftHel) % 24];
+      const b = profile[(t + skiftHel + 1) % 24];
+      return (a * (1 - skiftDel) + b * skiftDel) / parkingInt;
+    });
     const aSum = sum(arrivals);
     const normArrivals = aSum > 1e-9
       ? arrivals.map((a) => a / aSum)
