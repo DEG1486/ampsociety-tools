@@ -157,13 +157,7 @@
     const t = Math.max(0, target);
     const m = mean(hours) || 1;
     const scale = t / m;
-    let clamped = false;
-    const out = hours.map((h) => {
-      const v = h * scale;
-      if (v > 1) clamped = true;
-      return Math.max(0, Math.min(1, v));
-    });
-    return { hours: out, clamped };
+    return hours.map((h) => Math.max(0, Math.min(1, h * scale)));
   }
 
   // Default systemverkningsgrad (kabel- + hub-förluster). Bilens onboard-
@@ -266,11 +260,12 @@
     // längre kan flytta energin när parkeringstiden ändras ett steg.
     const profPeak = Math.max(...profile) || 1;
     const targetMean = occInput * (mean(profile) / profPeak);
-    const shaped = shapeToMean(presence, targetMean);
-    const hours = shaped.hours;
-    // Sätts när fler bilar än det finns uttag skulle behöva vara närvarande —
-    // anläggningen är då översökt vid den beläggningen och parkeringstiden.
-    const occupancyClamped = shaped.clamped;
+    const hours = shapeToMean(presence, targetMean);
+    // (occupancyClamped borttagen: med den nya ankomstmodellen kan clampningen
+    // aldrig bli bindande. Faltning med en normaliserad symmetrisk kärna kan
+    // bara SÄNKA kvoten topp/medel, så skalad topp <= reglagevärdet <= 1 för
+    // varje profil och varje parkeringstid. En flagga som inte kan bli sann
+    // ser ut som ett skyddsnät utan att vara ett.)
     const outletHoursDay = sum(hours) * outlets;
 
     // Sessionsantal: total presence-tid över dygnet / parkeringstid per session.
@@ -380,6 +375,8 @@
           chargingCars[h - rec0] = charging;
           perCarKW[h - rec0] = perCar;
         }
+        // Allt efter avläsningsdygnets sista kohort är bortkastat arbete.
+        if (rec0 >= 0 && h >= rec0 + 23 + parkingInt) break;
         denna[h % 24] = totalKW;
         // Vid varje dygnsslut: är dygnet identiskt med föregående är systemet
         // stationärt. Då lämnas ett helt extra dygn för avläsning, så att
@@ -388,7 +385,10 @@
           if (forra) {
             let diff = 0;
             for (let t = 0; t < 24; t++) diff = Math.max(diff, Math.abs(denna[t] - forra[t]));
-            if (diff < 1e-9 || h + 1 + 24 + parkingInt >= H) rec0 = h + 1;
+            // Sista kohorten i avläsningsdygnet (s0 = rec0+23) måste hinna ladda
+            // hela sitt fönster: rec0 + 23 + parkingInt <= H - 1. Det gamla
+            // villkoret pekade åt fel håll och trunkerade i stället för att rädda.
+            if (diff < 1e-9 || h + 1 + 24 + 24 + parkingInt > H) rec0 = h + 1;
           }
           forra = denna;
           denna = new Array(24).fill(0);
@@ -401,8 +401,10 @@
     // slutar ändå vid mött behov). SmartHub-levererat = capat av effectiveCap.
     const sim = simulate(effectiveCap, maxChargingSlots);
     const hourlyPower = sim.power;
-    // Baslinjen "okontrollerad efterfragan" ar en anlaggning UTAN lastbalansering:
-    // varje bil drar sitt eget tak, och da finns varken effekttak eller platstak.
+    // Baslinjen "okontrollerad efterfrågan" = SAMMA Amp5-hårdvara utan
+    // lastbalansering. Effekttak och platstak släpps, men sessionstaket och
+    // ChargePodens delade skydd är fysiska gränser som finns kvar oavsett
+    // styrning — de ligger därför medvetet kvar i loopkroppen.
     const hourlyDemand = simulate(Infinity, Infinity).power;
 
     const totalEnergyFromGrid = sum(hourlyPower);
@@ -476,7 +478,7 @@
       peakPowerKW, peakDemandKW, peakReductionKW, avgPowerKW,
       activeOutlets: avgActive,
       maxOutlets: outlets,
-      peakOccupancyPct, occupancyClamped, targetPeakPct: occInput,
+      peakOccupancyPct, targetPeakPct: occInput,
       sessionsPerOutletPerDay, totalSessionsPerDay, kwhPerOutletPerDay,
       sessionNeedKWh: needDelivered, needLimited,
       perCarAtPeakKW, chargingAtPeak,
@@ -634,16 +636,23 @@
     // tidigare gav 0,1 % marginal grönt ljus (granskningsfynd C4).
     const MARGIN = 0.10;
     const marginRatio = availableKW > 0 ? surplusKW / availableKW : 0;
-    const status = (surplusKW >= 0 && marginRatio >= MARGIN)
-      ? 'ok'
-      : (coverageRatio >= 0.8 ? 'marginal' : 'upgrade');
+    // Negativt överskott betyder alltid att servisen inte räcker. Den gamla
+    // coverageRatio-grenen lät "Marginellt: knappt tillräcklig kapacitet" stå
+    // kvar ända till 25 % överlast — etiketten var då direkt osann.
+    // 'marginal' betyder nu entydigt: räcker, men mindre än 10 % marginal kvar.
+    const status = surplusKW < 0
+      ? 'upgrade'
+      : (marginRatio >= MARGIN ? 'ok' : 'marginal');
     const extraNeeded = Math.max(0, -surplusKW);
     // Uppskattning servisutökning — H2: tre regimer baserat på storlek av utökning.
     // Linjär modell underskattade 3-10× vid stora behov enligt elprojektör-granskning.
     //   0–80 kW   : befintlig kabel räcker, säkrings-/mätarbyte. 30–150 kkr.
     //   80–300 kW : ny serviskabel, ev. utökat servisrum. 100–600 kkr.
     //   >300 kW   : ofta ny nätstation/transformator. 500 kkr – flera Mkr.
-    const needsUpgradeCost = status !== 'ok';
+    // Kostnaden villkoras på faktiskt behov, inte på status. Ett marginalfall
+    // med positivt överskott behöver noll extra kW, och fick ändå prislappen
+    // "servisutökning 30–80 kkr" utskriven i både UI och PDF.
+    const needsUpgradeCost = extraNeeded > 0;
     let upgradeCostLow = 0, upgradeCostHigh = 0;
     if (needsUpgradeCost) {
       if (extraNeeded <= 80) {
@@ -747,7 +756,8 @@
     OUTLET_HW_LIMIT_KW, CAR_AC_LIMIT_KW,
     DEFAULT_EFFICIENCY, ONBOARD_EFFICIENCY,
     LIMIT_REASON, LIMIT_REASON_LABEL, SCENARIO_PALETTE,
-    LB_STRATEGY, DEFAULT_STRATEGY, MIN_CHARGE_A, allocatePower, ampsToKW, isThreePhase,
+    LB_STRATEGY, DEFAULT_STRATEGY, MIN_CHARGE_A, GRID_MARGIN: 0.10,
+    allocatePower, ampsToKW, isThreePhase,
     PROFILES, CARS,
     computeEnergy, computeHubs, computeGridAssessment, computeEconomics,
     shapeToPeak,

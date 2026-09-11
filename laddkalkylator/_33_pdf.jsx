@@ -187,7 +187,8 @@ function summarizeInputs(data) {
       { label: 'SmartHubs', value: i.hubs == null ? `${i.autoHubs} (auto)` : i.hubs, unit: 'st' },
       { label: 'Systemtak', value: i.systemCap != null ? i.systemCap : 'Obegränsat', unit: i.systemCap != null ? 'kW' : '' },
       { label: 'Parkeringstid', value: i.parkingHours, unit: 'h' },
-      { label: 'Peak-beläggning', value: Math.round(i.peakOccupancyPct * 100), unit: '%' },
+      { label: 'Peak-beläggning (profil)', value: Math.round(i.peakOccupancyPct * 100), unit: '%' },
+      { label: 'Faktisk topp', value: Math.round((data.outputs.peakOccupancyPct || 0) * 100), unit: '%' },
       { label: 'Profil', value: i.profileLabel, unit: '' },
     ];
   }
@@ -298,7 +299,12 @@ function pdfWarnings(data) {
   const Amp = window.Amp5Calc;
   const warns = [];
   if (data.mode === 'hubs' && data.outputs && data.outputs.achievesTarget === false) {
-    const reason = Amp.LIMIT_REASON_LABEL[data.outputs.limitReason] || 'ej uppnåeligt med vald konfiguration';
+    // Alla bindande orsaker, inte bara den primära (granskningsfynd G11).
+    const skal = (data.outputs.limitReasons && data.outputs.limitReasons.length)
+      ? data.outputs.limitReasons
+      : [data.outputs.limitReason];
+    const reason = skal.map((r) => Amp.LIMIT_REASON_LABEL[r]).filter(Boolean).join(' och ')
+      || 'ej uppnåeligt med vald konfiguration';
     warns.push(`Energimålet ${Amp.fmt(data.inputs.desiredKWhPerOutlet, { digits: 0 })} kWh/plats nås inte — `
       + `systemet levererar ${Amp.fmt(data.outputs.actualEnergyPerOutlet, { digits: 1 })} kWh `
       + `(${Amp.fmt(data.outputs.shortfallKWh, { digits: 1 })} kWh under målet), ${reason}.`);
@@ -315,8 +321,12 @@ function pdfWarnings(data) {
     }
     const present = q.presentAtPeak || 0;
     const queueShare = present > 0.5 ? (q.queuedAtPeak || 0) / present : 0;
+    // Utan angivet energibehov finns inget behov att missa — då är kö bara
+    // lastbalansering. Samma villkor som skärmen; saknades här och lät
+    // kundrapporten påstå ett underskott mot ett behov kunden aldrig angett.
+    const harBehov = q.sessionNeedKWh != null;
     // Visa inte kövarningen när överskottsvarningen redan täcker samma sak.
-    if (!q.needLimited && queueShare > 0.4 && (q.chargingAtPeak || 0) > 0
+    if (harBehov && !q.needLimited && queueShare > 0.4 && (q.chargingAtPeak || 0) > 0
         && (q.sessionOverflowMax || 0) <= 0.5) {
       warns.push(`Kö vid topplast: ${Amp.fmt(q.chargingAtPeak, { digits: 0 })} av `
         + `${Amp.fmt(present, { digits: 0 })} bilar laddar samtidigt à `
@@ -565,9 +575,10 @@ function PDFEditorial({ data }) {
               laddeffekt per hub, {data.const.outletsPerHub} uttag och {Amp.MAX_SESSIONS_PER_HUB} simultana
               laddsessioner per hub.
               Beläggningsprofilen <em>{data.inputs.profileLabel}</em> faltas med
-              parkeringstidsfönstret och skalas så att profilens topp matchar
-              vald topp-beläggning — faltningen kan ge en jämnare kurva än
-              profilen. Effekten fördelas som i Amp5:s lastbalansering
+              parkeringstidsfönstret och skalas så att antalet bilplatstimmar per
+              dygn matchar vald topp-beläggning. Vid lång parkeringstid blir
+              närvarokurvans topp därför lägre än profilens — en bil som står nio
+              timmar kan inte ge en skarpare topp än så. Effekten fördelas som i Amp5:s lastbalansering
               ({data.const.strategy}): startström i prioritetsordning tills
               kapaciteten är slut, resten köar — inget fordon laddar under 6 A.
               {data.mode === 'energy' && data.inputs.sessionNeedKWh > 0
@@ -737,10 +748,13 @@ function PDFTechnical({ data }) {
           <div>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 10 }}>Beräkningsmetod</div>
             <div style={{ fontSize: 10.5, lineHeight: 1.6, color: BRAND.ink2 }}>
-              Ankomsterna rekonstrueras ur beläggningsprofilen (dekonvolution)
-              och faltas med parkeringstidsfönstret. Resultatet skalas så att
-              <em> topp</em>-beläggningen matchar slidervärdet; faltningen kan ge
-              en jämnare kurva än profilen. Effekten per aktiv bil är
+              Av bilarna som står på en plats en viss timme antas en andel
+              1/parkeringstiden ha anlänt just då. Ankomsterna faltas med
+              parkeringstidsfönstret, och kurvan skalas så att antalet
+              bilplatstimmar per dygn matchar vald topp-beläggning. Vid lång
+              parkeringstid blir närvarokurvans topp därför lägre än profilens —
+              en bil som står nio timmar kan inte ge en skarpare topp än så.
+              Effekten per aktiv bil är
               enligt Amp5:s lastbalansering: startström i prioritetsordning tills
               kapaciteten är förbrukad, resten köar, och inget fordon laddar under
               6 A. Antalet bilar som laddar samtidigt är därför
@@ -950,9 +964,10 @@ function PDFCompare({ data }) {
         <div>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 8 }}>Beräkningsmetod</div>
           <div style={{ fontSize: 10, lineHeight: 1.55, color: BRAND.ink2 }}>
-            Ankomsterna rekonstrueras ur beläggningsprofilen (dekonvolution) och
-            faltas med parkeringstidsfönstret. Resultatet skalas så att
-            <em> topp</em>-beläggningen matchar slidervärdet. Effekten per aktiv bil är
+            Av bilarna som står på en plats en viss timme antas en andel
+            1/parkeringstiden ha anlänt just då, faltat med parkeringstidsfönstret.
+            Kurvan skalas så att antalet bilplatstimmar per dygn matchar vald
+            topp-beläggning. Effekten per aktiv bil är
             startström i prioritetsordning tills kapaciteten är förbrukad; resten
             köar. Inget fordon laddar under 6 A.
           </div>
@@ -1067,7 +1082,7 @@ function EconomicsSectionPDF({ economics }) {
   const {
     capitalCost, materialCost, installationCost, investmentGrant, netCapitalCost,
     monthlyEnergyCost, monthlyPowerCost, monthlyOmCost,
-    monthlyRevenue, monthlyEnergyKWh, paybackYears, paybackMonths,
+    monthlyRevenue, monthlyEnergyKWh, monthlyPurchasedKWh, paybackYears, paybackMonths,
     electricityPrice, chargingFee, daysPerMonth,
   } = economics;
   const hasGrant = (investmentGrant || 0) > 0;
@@ -1143,7 +1158,8 @@ function EconomicsSectionPDF({ economics }) {
           inte kontrollräkna rubriktalet (granskningsfynd E3/E4). */}
       <div style={{ marginTop: 6, fontSize: 9, color: BRAND.mute, lineHeight: 1.5 }}>
         <strong style={{ color: BRAND.ink2 }}>Antaganden: </strong>
-        elpris {Amp.fmt(electricityPrice || 0, { digits: 2 })} kr/kWh ·
+        elpris {Amp.fmt(electricityPrice || 0, { digits: 2 })} kr/kWh på
+        {' '}{Amp.fmt(monthlyPurchasedKWh || 0, { digits: 0 })} kWh inköpt ·
         laddavgift {chargingFee > 0 ? `${Amp.fmt(chargingFee, { digits: 2 })} kr/kWh` : 'ingen, fri laddning'} ·
         {' '}{Amp.fmt(daysPerMonth || 30, { digits: 0 })} laddningsdagar/mån ·
         {' '}{Amp.fmt(monthlyEnergyKWh || 0, { digits: 0 })} kWh levererat/mån
@@ -1190,7 +1206,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.8.2',
+      version: '3.8.3',
     },
   };
 }

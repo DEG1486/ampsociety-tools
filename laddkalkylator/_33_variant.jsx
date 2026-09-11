@@ -14,7 +14,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     projectName: projectName || '', // U2-fix: tom sträng = ej angivet; PDF visar ej default-strängen
     date: new Date().toLocaleDateString('sv-SE'),
     reportId,
-    version: '3.8.2',
+    version: '3.8.3',
   };
   const consts = {
     capPerHub, outletsPerHub: C.OUTLETS_PER_HUB,
@@ -126,7 +126,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       projectName: projectName || '', // U2-fix: tom sträng = ej angivet
       date: new Date().toLocaleDateString('sv-SE'),
       reportId,
-      version: '3.8.2',
+      version: '3.8.3',
     },
   };
 }
@@ -182,6 +182,14 @@ async function exportAsPdf(data) {
   // Render the PDF template into the overlay
   const root = ReactDOM.createRoot(overlay);
   const Template = data.mode === 'compare' ? window.PDFCompare : window.PDFEditorial;
+  // Utan den här kontrollen gav ett saknat eller trasigt mallobjekt tomma A4-sidor
+  // i kundens utskrift i stället för ett felmeddelande.
+  if (typeof Template !== 'function') {
+    console.error('PDF-mallen saknas — avbryter export.');
+    try { overlay.remove(); } catch (_) {}
+    _pdfExporting = false;
+    return;
+  }
   root.render(<Template data={data} />);
 
   await waitForRender(overlay);
@@ -280,11 +288,26 @@ function encodeCalcState(s) {
 function decodeCalcState(str) {
   try { return JSON.parse(decodeURIComponent(escape(atob(str)))); } catch (_) { return null; }
 }
+// Kostnadsfälten utelämnas medvetet ur delningslänken. De måste därför läsas
+// tillbaka ur localStorage och läggas ovanpå hash-tillståndet — annars nollställs
+// säljarens egen kostnadsbild tyst vid varje omladdning av en delad länk.
+const KOSTNADSFALT = ['materialCost', 'installationCost', 'omPctYear', 'investmentGrant'];
 function loadInitialCalcState() {
   const h = window.location.hash;
   if (h && h.startsWith('#k=')) {
     const s = decodeCalcState(h.slice(3));
-    if (s && typeof s === 'object') return s;
+    if (s && typeof s === 'object') {
+      try {
+        const raw = localStorage.getItem(STORE_KEY);
+        const lokalt = raw ? JSON.parse(raw) : null;
+        if (lokalt && typeof lokalt === 'object') {
+          for (const k of KOSTNADSFALT) {
+            if (s[k] === undefined && lokalt[k] !== undefined) s[k] = lokalt[k];
+          }
+        }
+      } catch (_) {}
+      return s;
+    }
   }
   try {
     const raw = localStorage.getItem(STORE_KEY);
@@ -539,15 +562,16 @@ function InstrumentVariant() {
     electricityPrice, chargingFee,
     totalEnergyDay: chartEnergy.totalEnergyDay,
     gridEnergyDay: chartEnergy.totalEnergyFromGrid,
-    // Effektavgiften debiteras på abonnemangspunktens uppmätta topp, alltså
-    // laddningen OVANPÅ fastighetens befintliga last — inte laddningen isolerat.
-    // Utan grundlasten underskattades avgiften med 20 % i defaultfallet (G8).
-    powerTariff, peakPowerKW: chartEnergy.peakPowerKW + (gridAssessment.existingKW || 0),
+    // Effekttariffen ska bara belasta det investeringen FAKTISKT orsakar, dvs.
+    // ökningen av abonnemangstoppen — inte fastighetens befintliga grundlast.
+    // Ett tidigare försök lade på existingKW, med följden att en större
+    // servissäkring gjorde laddprojektets payback sämre: identisk anläggning
+    // gick från 3,75 år till 6,00 år bara för att säkringen byttes 63 A -> 250 A.
+    powerTariff, peakPowerKW: chartEnergy.peakPowerKW,
     omPctYear: omPctYear / 100,
     daysPerMonth: activeDaysPerMonth ?? profile.daysPerMonth ?? 30,
     investmentGrant,
   }), [chartEnergy.totalEnergyDay, chartEnergy.totalEnergyFromGrid, chartEnergy.peakPowerKW,
-      gridAssessment.existingKW,
       materialCost, installationCost, electricityPrice, chargingFee,
       powerTariff, omPctYear, activeDaysPerMonth, profileKey, investmentGrant]);
 
@@ -1276,6 +1300,7 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh1
     ['Befintlig last',                 `${C.fmt(existingKW, { digits: 0 })} kW`],
     ['Tillgänglig för laddning',       `${C.fmt(availableKW, { digits: 0 })} kW`],
     ['Överskott / underskott',         `${surplusKW >= 0 ? '+' : ''}${C.fmt(surplusKW, { digits: 0 })} kW`],
+    ['Marginal mot tillgänglig effekt', `${C.fmt((assessment.marginRatio || 0) * 100, { digits: 0 })} % (krav ${Math.round(C.GRID_MARGIN * 100)} %)`],
     ...(perCarPeakKW != null ? [['Effekt per laddande bil vid topp', `${C.fmt(perCarLimitKW, { digits: 1 })} kW`]] : []),
     ...(present > 0.5 ? [['Vid topp: laddar / köar', `${C.fmt(charging, { digits: 0 })} / ${C.fmt(queued, { digits: 0 })} bilar`]] : []),
   ];
@@ -1468,7 +1493,7 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
         outlets: s.outlets, hubs: s.hubs, capPerHub: s.capPerHub, systemCap: s.systemCap,
         parkingHours: s.parkingHours, profileHours: profile.hours,
         peakOccupancyPct: s.peakOcc,
-        hwLimitKW: carAcLimit, efficiency, sessionNeedKWh,
+        hwLimitKW: carAcLimit, efficiency, sessionNeedKWh, strategy,
         profileLabel: profile.label,
       });
       return { scenario: s, energy: e, profile, rangeKm: C.rangeKm(e.perOutletKWh, car.kwh100) };
@@ -1882,10 +1907,18 @@ function Hero({ mode, kWh, rangeKm, car, carId, setCarId, energy, sizing, peakOc
     ? `${energy.hubs} × ${perHubKW} kW · ${energy.profileLabel || 'Profil'} · faktisk topp ${Math.round((energy.peakOccupancyPct ?? peakOcc) * 100)} % beläggning${energy.needLimited ? ' · behovet uppfylls' : ''}`
     : sizing.achievesTarget
         ? (sizing.headroomKWh > 0.1 ? 'når energimålet · marginal finns' : 'når energimålet · ingen marginal')
-        : (LIMIT_SUB[sizing.limitReason] || 'ej uppnåeligt med vald konfiguration');
+        : ((sizing.limitReasons && sizing.limitReasons.length
+            ? sizing.limitReasons.map((r) => LIMIT_SUB[r]).filter(Boolean).join(' · ')
+            : LIMIT_SUB[sizing.limitReason]) || 'ej uppnåeligt med vald konfiguration');
 
+  // Alla bindande orsaker, inte bara den primära. computeHubs vet om både
+  // fastighetstaket och bilens AC-tak binder samtidigt; visas bara den ena får
+  // säljaren ett råd som inte räcker hela vägen (granskningsfynd G11).
   const warning = mode === 'hubs' && !sizing.achievesTarget
-    ? (LIMIT_WARNINGS[sizing.limitReason] || LIMIT_WARNINGS[C.LIMIT_REASON.HW_CONFIG])
+    ? ((sizing.limitReasons && sizing.limitReasons.length
+        ? sizing.limitReasons.map((r) => LIMIT_WARNINGS[r]).filter(Boolean)
+        : [LIMIT_WARNINGS[sizing.limitReason] || LIMIT_WARNINGS[C.LIMIT_REASON.HW_CONFIG]]
+      ).join(' '))
     : null;
 
   return (
@@ -2059,7 +2092,7 @@ function StatList({ mode, energy, sizing, chartEnergy }) {
     ['Laddningar / uttag·dygn', fmtSessions(energy.sessionsPerOutletPerDay)],
     ['Totalt laddningar / dygn', fmtSessions(energy.totalSessionsPerDay)],
     ['kWh / uttag·dygn',        `${C.fmt(energy.kwhPerOutletPerDay, { digits: 1 })} kWh`],
-    ['Snitteffekt / aktivt uttag', `${C.fmt(energy.avgPowerPerActive, { digits: 1 })} kW`],
+    ['Medeleffekt / belagd plats', `${C.fmt(energy.avgPowerPerActive, { digits: 1 })} kW`],
     ['SmartHubs',               `${energy.hubs} × ${energy.hubs ? Math.round(energy.installedCap / energy.hubs) : C.CAP_PER_HUB_KW} kW`],
   ] : [
     ['Installerad kapacitet',  `${C.fmt(sizing.installedCap, { digits: 0 })} kW`],
