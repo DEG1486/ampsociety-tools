@@ -6,6 +6,11 @@
   // uppdateras dessa här; all känslighet i UI/PDF hämtar via Amp5Calc.
   const CAP_PER_HUB_KW = 44;       // kW per SmartHub (nominal)
   const OUTLETS_PER_HUB = 54;      // fysiska uttag per SmartHub
+  // Handbok 3.1: 54 uttag är den fysiska kapaciteten, 30 är taket för hur många
+  // sessioner som kan vara igång samtidigt. Enligt precisionsreglerna i
+  // avlivade-pastaenden.md MÅSTE "54 uttag" alltid följas av det här talet i
+  // externt material — därför ligger det här och inte som en PDF-literal.
+  const MAX_SESSIONS_PER_HUB = 30; // simultana laddsessioner per SmartHub
   const OUTLET_HW_LIMIT_KW = 22;   // hub-uttagets HW-tak (Type 2 trefas 32A)
   const CAR_AC_LIMIT_KW = 11;      // typisk modern EV on-board charger (trefas 16A)
   // Bilen är nästan alltid den lägre — endast en liten del av flottan
@@ -25,9 +30,45 @@
     [LIMIT_REASON.SYSTEM_CAP]: 'begränsad av fastighetseffekttak',
     [LIMIT_REASON.HW_CONFIG]:  'ej uppnåeligt med vald konfiguration',
   });
-  // Trickle-gräns: under denna effekt per laddande bil vid samtidig peak
-  // varnar både UI och PDF för underdimensionering.
-  const TRICKLE_LIMIT_KW = 2.0;
+  // (TRICKLE_LIMIT_KW borttagen 2026-09: tröskeln på 2 kW kunde aldrig nås sedan
+  // 6 A-golvet infördes — ingen session körs under 4,16 kW trefas. Varningen om
+  // underdimensionering bygger nu på kö-andelen vid topp i stället.)
+
+  // --- Lastbalansering enligt handbok 8.3.1 -------------------------------
+  // Amp5 delar INTE ut effekten jämnt över alla närvarande bilar. Startström
+  // tilldelas i prioritetsordning tills kapaciteten är förbrukad; sessioner
+  // längre ned i ordningen får ingen ström alls. Minimigränsen är 6 A —
+  // "inget fordon laddar mellan 0 och 6 A". Felläget vid underdimensionering
+  // är alltså KÖ, inte att alla droppar till en rännil.
+  const MIN_CHARGE_A = 6;
+  const LB_STRATEGY = Object.freeze({
+    priority: { key: 'priority', label: 'PriorityMaxPower (standard)', startA: 16 },
+    fair:     { key: 'fair',     label: 'FairSharedPower',             startA: 8  },
+  });
+  const DEFAULT_STRATEGY = 'priority';
+
+  // Fasgränsen: 3,7 och 7,4 kW är enfas (16/32 A), 11 och 22 kW är trefas.
+  const isThreePhase = (limitKW) => limitKW > 7.5;
+  const ampsToKW = (a, threePhase) => (threePhase ? Math.sqrt(3) * 400 * a : 230 * a) / 1000;
+
+  // Fördelar tillgänglig effekt över de bilar som vill ladda.
+  //   cap        kW som finns att fördela
+  //   wanting    antal bilar som har session och ännu behöver energi
+  //   hwLimit    bilens AC-tak (kW)
+  //   startKW    strategins startströmsportion i kW
+  //   minKW      6 A uttryckt i kW för aktuell fasning
+  // Returnerar effekt per LADDANDE bil och hur många som faktiskt får ström.
+  function allocatePower(cap, wanting, hwLimit, startKW, minKW) {
+    if (!(cap > 0) || !(wanting > 0)) return { perCar: 0, charging: 0 };
+    const start = Math.min(startKW, hwLimit);
+    if (start < minKW) return { perCar: 0, charging: 0 };
+    if (cap >= wanting * start) {
+      // Alla kommer igång. Runda 2 fyller på jämnt upp till bilens tak.
+      return { perCar: Math.min(hwLimit, cap / wanting), charging: wanting };
+    }
+    // Kapaciteten räcker inte till alla: de som ryms får startström, resten köar.
+    return { perCar: start, charging: cap / start };
+  }
 
   const SCENARIO_PALETTE = ['#F46036', '#58A08B', '#F5A888', '#86341E', '#2E5449', '#B5CDC3'];
 
@@ -200,38 +241,73 @@
     const needGrid = needDelivered != null ? needDelivered / efficiency : Infinity;
     const cohortCars = normArrivals.map((a) => a * totalSessionsPerDay); // ankommande bilar per timme
 
+    // Spec-gränser per hub (handbok 3.1, 8.3.1): antal samtidiga sessioner och
+    // 6 A-golvet. Bilar utöver sessionstaket får ingen session alls.
+    const strategyKey = LB_STRATEGY[inp.strategy] ? inp.strategy : DEFAULT_STRATEGY;
+    const strategy = LB_STRATEGY[strategyKey];
+    const threePhase = isThreePhase(hwLimit);
+    const minChargeKW = ampsToKW(MIN_CHARGE_A, threePhase);
+    const startKW = ampsToKW(strategy.startA, threePhase);
+    const sessionCapacity = hubs * MAX_SESSIONS_PER_HUB;
+    // Hur många laddpunkter kan som mest tilldelas ström samtidigt (63 A / 6 A
+    // ≈ 10 per central enligt 8.3.1). Rapporteras för varningstexter.
+    const maxChargingSlots = Math.floor(effectiveCap / minChargeKW);
+
     const simulate = (cap) => {
-      const power = new Array(24).fill(0);      // kW per timme (stationärt dygn)
-      const sessionKWh = new Array(24).fill(0); // grid-kWh per bil, per ankomsttimme
-      const chargingCars = new Array(24).fill(0); // antal LADDANDE bilar per timme
-      const remaining = new Array(96).fill(0);  // kvarvarande grid-behov per kohort
+      const power = new Array(24).fill(0);        // kW per timme (stationärt dygn)
+      const sessionKWh = new Array(24).fill(0);   // grid-kWh per bil, per ankomsttimme
+      const chargingCars = new Array(24).fill(0); // antal bilar som FÅR ström
+      const presentCars = new Array(24).fill(0);  // antal bilar vid uttag
+      const perCarKW = new Array(24).fill(0);     // effekt per laddande bil
+      const remaining = new Array(96).fill(0);    // kvarvarande grid-behov per kohort
       for (let h = 0; h < 96; h++) {
         remaining[h] = needGrid;
-        let activeCars = 0;
-        const charging = [];
+        let activeCars = 0, present = 0;
+        const queue = [];
         for (let s0 = Math.max(0, h - parkingInt + 1); s0 <= h; s0++) {
-          if (cohortCars[s0 % 24] <= 1e-12 || remaining[s0] <= 1e-9) continue;
-          charging.push(s0);
-          activeCars += cohortCars[s0 % 24];
+          const n = cohortCars[s0 % 24];
+          if (n <= 1e-12) continue;
+          present += n;
+          if (remaining[s0] <= 1e-9) continue; // står kvar men är färdigladdad
+          queue.push(s0);
+          activeCars += n;
         }
-        if (charging.length === 0) continue;
-        // Kapacitetsdelning bland bilar som fortfarande laddar. En bil i sin
-        // sista deltimme utnyttjar inte hela sin andel — överskottet om-
-        // fördelas inte (marginellt konservativt mot smart lastbalansering).
-        const perCar = Math.min(hwLimit, cap / Math.max(activeCars, 1));
+        if (h >= 48 && h < 72) presentCars[h - 48] = present;
+        if (queue.length === 0) continue;
+
+        // Sessionstaket: ryms inte alla närvarande bilar som sessioner får
+        // överskottet ingen laddpunkt alls. Modelleras som en andel av
+        // populationen — aggregerad energi blir rätt, och överskottet
+        // rapporteras separat så UI/PDF kan varna för underdimensionering.
+        const sessionFrac = present > sessionCapacity ? sessionCapacity / present : 1;
+        const wanting = activeCars * sessionFrac;
+
+        // Poddelning (handbok 3.1): 22 kW gäller bara ensamt aktivt uttag på
+        // ChargePoden. Är podens andra uttag upptaget delar de 32 A-skyddet
+        // och får 11 kW vardera. Väntevärdet skalas med beläggningsgraden.
+        const podBusy = outlets > 0 ? Math.min(1, present / outlets) : 0;
+        const hwEff = hwLimit > 11 ? hwLimit - (hwLimit - 11) * podBusy : hwLimit;
+
+        const { perCar, charging } = allocatePower(cap, wanting, hwEff, startKW, minChargeKW);
+        if (charging <= 0) continue;
+        // Andel av de köande bilarna som får ström den här timmen. Bilar som
+        // står i kö klättrar i prioritetsordningen (köbonus, 8.3.1.3), så över
+        // dygnet roterar tilldelningen — därför fördelas medeleffekten här.
+        const servedShare = perCar * (charging / wanting) * sessionFrac;
         let totalKW = 0;
-        for (const s0 of charging) {
-          const draw = Math.min(perCar, remaining[s0]); // 1 h → kWh
+        for (const s0 of queue) {
+          const draw = Math.min(servedShare, remaining[s0]); // 1 h → kWh
           remaining[s0] -= draw;
           totalKW += draw * cohortCars[s0 % 24];
           if (s0 >= 48 && s0 < 72) sessionKWh[s0 - 48] += draw;
         }
         if (h >= 48 && h < 72) {
           power[h - 48] = totalKW;
-          chargingCars[h - 48] = activeCars;
+          chargingCars[h - 48] = charging;
+          perCarKW[h - 48] = perCar;
         }
       }
-      return { power, sessionKWh, chargingCars };
+      return { power, sessionKWh, chargingCars, presentCars, perCarKW };
     };
 
     // Okontrollerad efterfrågan = samma simulering utan effekttak (bilarna
@@ -243,17 +319,27 @@
     const totalEnergyFromGrid = sum(hourlyPower);
     const totalEnergyDay = totalEnergyFromGrid * efficiency;
 
-    // Effekt per LADDANDE bil i den timme som ger toppeffekten. Bilar som
-    // mött sitt behov står kvar utan att ladda och ingår inte i nämnaren —
-    // till skillnad från närvaro-baserade mått (peakPower / närvarande).
+    // Effekt per LADDANDE bil i den timme som ger toppeffekten. Kommer nu
+    // direkt ur fördelningen (startström eller jämn påfyllning) i stället för
+    // att räknas om som effekttak / antal närvarande — den gamla formeln gav
+    // fysiskt omöjliga värden under 6 A.
     let peakHour = 0;
     for (let t = 1; t < 24; t++) {
       if (hourlyPower[t] > hourlyPower[peakHour]) peakHour = t;
     }
     const chargingAtPeak = sim.chargingCars[peakHour];
-    const perCarAtPeakKW = chargingAtPeak > 1e-9
-      ? Math.min(hwLimit, effectiveCap / Math.max(chargingAtPeak, 1))
-      : null;
+    const presentAtPeak = sim.presentCars[peakHour];
+    const perCarAtPeakKW = chargingAtPeak > 1e-9 ? sim.perCarKW[peakHour] : null;
+    // Alla närvarande bilar som INTE får ström vid toppen. Räknar både de som
+    // har en session men väntar på tur och de som inte ryms som session alls —
+    // att bara räkna den första gruppen gav ett missvisande litet tal när
+    // sessionstaket var kraftigt överskridet.
+    const queuedAtPeak = Math.max(0, presentAtPeak - chargingAtPeak);
+    // Bilar som inte ens ryms som session — anläggningen behöver fler hubbar.
+    const sessionOverflow = Math.max(0, Math.round((presentAtPeak - sessionCapacity) * 100) / 100);
+    // Flest samtidigt närvarande bilar över dygnet (dimensionerande för sessionstaket).
+    const maxPresent = Math.max(...sim.presentCars, 0);
+    const sessionOverflowMax = Math.max(0, Math.round((maxPresent - sessionCapacity) * 100) / 100);
 
     // Per-bil-energi efter η: ankomstviktat snitt av kohorternas sessionsenergi.
     // Simuleringen sker i grid-units, η appliceras vid output.
@@ -294,6 +380,10 @@
       sessionsPerOutletPerDay, totalSessionsPerDay, kwhPerOutletPerDay,
       sessionNeedKWh: needDelivered, needLimited,
       perCarAtPeakKW, chargingAtPeak,
+      // Spec-gränser och kö (handbok 3.1, 8.3.1)
+      presentAtPeak, queuedAtPeak, maxPresent,
+      sessionCapacity, sessionOverflow, sessionOverflowMax,
+      maxChargingSlots, minChargeKW, startKW, strategy: strategyKey,
       hourly: hourlyPower,
       hourlyDemand,
       occupancy: hours,
@@ -331,6 +421,10 @@
     const powerNeeded = (desiredKWhPerOutlet * activeOutlets) / (parkingH * efficiency);
 
     const hubsByOutlets = Math.ceil(outlets / OUTLETS_PER_HUB);
+    // Sessionstaket (handbok 3.1): en SmartHub kör max 30 simultana sessioner.
+    // 54 uttag på en hub räcker alltså inte om beläggningen är hög — då krävs
+    // fler hubbar även om både uttagsantal och effekt hade rymts.
+    const hubsBySessions = Math.max(1, Math.ceil(activeOutlets / MAX_SESSIONS_PER_HUB));
 
     // Hubs som faktiskt tillför effekt — systemCap bestämmer taket.
     // Om systemCap finns är hubs över (systemCap/capPerHub) verkningslösa.
@@ -345,7 +439,7 @@
     const hubsByPowerIdeal = Math.ceil(Math.min(powerNeeded, maxAbsorbKW) / capPerHub);
     const hubsByPower = Math.min(hubsByPowerIdeal, maxUsableHubs);
 
-    const hubs = Math.max(1, hubsByOutlets, hubsByPower);
+    const hubs = Math.max(1, hubsByOutlets, hubsBySessions, hubsByPower);
     const installedCap = hubs * capPerHub;
     const effectiveCap = systemCap != null
       ? Math.min(installedCap, systemCap)
@@ -390,7 +484,8 @@
     const kwhPerOutletPerDay = deliveredPerSession * sessionsPerOutletPerDay;
 
     return {
-      hubs, hubsByOutlets, hubsByPower, hubsByPowerIdeal, maxUsableHubs,
+      hubs, hubsByOutlets, hubsBySessions, hubsByPower, hubsByPowerIdeal, maxUsableHubs,
+      sessionCapacity: hubs * MAX_SESSIONS_PER_HUB,
       powerNeeded, installedCap, effectiveCap,
       activeOutlets,
       actualEnergyPerOutlet: actualEnergy,
@@ -497,6 +592,9 @@
     return {
       capitalCost, investmentGrant: grant, netCapitalCost,
       materialCost: material, installationCost: installation,
+      // Priserna ekas tillbaka så att PDF:en kan redovisa vad paybacken bygger på.
+      // Utan dem kan mottagaren inte kontrollräkna rubriktalet (granskningsfynd E3).
+      electricityPrice: electricityPrice || 0, chargingFee: chargingFee || 0,
       // Bakåtkomp — behåll äldre fältnamn som alias så PDF/övrig kod inte bryts
       hubCapital: material, outletCapital: installation,
       daysPerMonth: days,
@@ -519,10 +617,11 @@
   }
 
   window.Amp5Calc = {
-    CAP_PER_HUB_KW, OUTLETS_PER_HUB, HW_LIMIT_KW,
+    CAP_PER_HUB_KW, OUTLETS_PER_HUB, MAX_SESSIONS_PER_HUB, HW_LIMIT_KW,
     OUTLET_HW_LIMIT_KW, CAR_AC_LIMIT_KW,
     DEFAULT_EFFICIENCY,
-    LIMIT_REASON, LIMIT_REASON_LABEL, TRICKLE_LIMIT_KW, SCENARIO_PALETTE,
+    LIMIT_REASON, LIMIT_REASON_LABEL, SCENARIO_PALETTE,
+    LB_STRATEGY, DEFAULT_STRATEGY, MIN_CHARGE_A, allocatePower, ampsToKW, isThreePhase,
     PROFILES, CARS,
     computeEnergy, computeHubs, computeGridAssessment, computeEconomics,
     shapeToPeak,

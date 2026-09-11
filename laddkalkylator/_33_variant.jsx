@@ -5,8 +5,8 @@
 // ───────── PDF export helper ─────────
 function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
                        profileKey, peakOcc, desiredKWh, occPct, car,
-                       carAcLimit, efficiency, sessionNeedKWh, projectName,
-                       energy, sizing, reportId,
+                       carAcLimit, efficiency, sessionNeedKWh, strategy, projectName,
+                       energy, sizing, chartEnergy, reportId,
                        gridAssessment, economics, perCarPeakKW }) {
   const C = window.Amp5Calc;
   const profile = C.PROFILES[profileKey];
@@ -14,12 +14,22 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     projectName: projectName || '', // U2-fix: tom sträng = ej angivet; PDF visar ej default-strängen
     date: new Date().toLocaleDateString('sv-SE'),
     reportId,
-    version: '3.7',
+    version: '3.8',
   };
   const consts = {
     capPerHub, outletsPerHub: C.OUTLETS_PER_HUB,
     carAcLimit: carAcLimit ?? C.CAR_AC_LIMIT_KW,
     efficiency: efficiency ?? C.DEFAULT_EFFICIENCY,
+    strategy: (C.LB_STRATEGY[strategy] || C.LB_STRATEGY[C.DEFAULT_STRATEGY]).label,
+  };
+  // Kö-/sessionsdata kommer alltid ur profilmodellen (= grafen och ekonomin),
+  // även i hubs-läget där computeHubs står för dimensioneringen.
+  const q = chartEnergy || energy;
+  const queue = {
+    presentAtPeak: q.presentAtPeak, chargingAtPeak: q.chargingAtPeak,
+    queuedAtPeak: q.queuedAtPeak, maxPresent: q.maxPresent,
+    sessionCapacity: q.sessionCapacity, sessionOverflowMax: q.sessionOverflowMax,
+    needLimited: q.needLimited, perCarAtPeakKW: q.perCarAtPeakKW,
   };
   if (mode === 'energy') {
     return {
@@ -37,6 +47,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
       },
       outputs: energy,
       const: consts,
+      queue,
       meta,
       gridAssessment: gridAssessment || null,
       economics: economics || null,
@@ -47,11 +58,11 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
   // spegla verklig beläggningsprofil. peakOcc sätts till occPct (hub-lägets
   // beläggning) som skalningsfaktor för profilen.
   const hubProfile = C.PROFILES[profileKey] || C.PROFILES.flat;
-  const hubEnergy = C.computeEnergy({
+  const hubEnergy = chartEnergy || C.computeEnergy({
     outlets, hubs: sizing.hubs, capPerHub, systemCap,
     parkingHours, profileHours: hubProfile.hours,
     peakOccupancyPct: occPct,
-    hwLimitKW: carAcLimit, efficiency,
+    hwLimitKW: carAcLimit, efficiency, strategy,
     sessionNeedKWh: desiredKWh, // energimålet är bilens behov i hubs-läget
   });
   return {
@@ -67,8 +78,14 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
       ...sizing,
       hourly: hubEnergy.hourly,
       avgPowerPerOutlet: hubEnergy.avgPowerPerActive,
+      // Energiraderna ur profilmodellen — samma som graf, nyckeltal och ekonomi.
+      kwhPerOutletPerDay: hubEnergy.kwhPerOutletPerDay,
+      totalSessionsPerDay: hubEnergy.totalSessionsPerDay,
+      sessionsPerOutletPerDay: hubEnergy.sessionsPerOutletPerDay,
+      totalEnergyDay: hubEnergy.totalEnergyDay,
     },
     const: consts,
+    queue,
     meta,
     gridAssessment: gridAssessment || null,
     economics: economics || null,
@@ -76,7 +93,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
   };
 }
 
-function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, reportId, projectName }) {
+function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, strategy, reportId, projectName }) {
   const C = window.Amp5Calc;
   const computed = scenarios.map((s) => {
     const profile = C.PROFILES[s.profileKey];
@@ -84,7 +101,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       outlets: s.outlets, hubs: s.hubs, capPerHub: s.capPerHub, systemCap: s.systemCap,
       parkingHours: s.parkingHours, profileHours: profile.hours,
       peakOccupancyPct: s.peakOcc,
-      hwLimitKW: carAcLimit, efficiency, sessionNeedKWh,
+      hwLimitKW: carAcLimit, efficiency, sessionNeedKWh, strategy,
       profileLabel: profile.label,
     });
     return {
@@ -109,7 +126,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       projectName: projectName || '', // U2-fix: tom sträng = ej angivet
       date: new Date().toLocaleDateString('sv-SE'),
       reportId,
-      version: '3.7',
+      version: '3.8',
     },
   };
 }
@@ -266,7 +283,10 @@ function loadInitialCalcState() {
 // Etiketterna delas med PDF:en via Amp5Calc.LIMIT_REASON_LABEL (en källa).
 const LIMIT_SUB = window.Amp5Calc.LIMIT_REASON_LABEL;
 const LIMIT_WARNINGS = {
-  [window.Amp5Calc.LIMIT_REASON.HW]:         'Målet kräver högre effekt per bil än fordonets AC-laddartak. Kortare parkering eller fler uttag krävs.',
+  // Rättad 2026-09: tidigare stod "kortare parkering eller fler uttag krävs".
+  // Effektbehovet per bil är mål / (parkeringstid × η) — oberoende av antalet
+  // uttag, och det ÖKAR när tiden kortas. Båda råden var alltså felaktiga.
+  [window.Amp5Calc.LIMIT_REASON.HW]:         'Målet kräver högre effekt per bil än fordonets AC-laddartak. Längre parkeringstid eller lägre energimål krävs — alternativt ett fordon som klarar 22 kW AC.',
   [window.Amp5Calc.LIMIT_REASON.SYSTEM_CAP]: 'Fastighetseffekttaket begränsar. Målet kräver servisutökning.',
   [window.Amp5Calc.LIMIT_REASON.HW_CONFIG]:  'Målet uppnås inte med vald tid och beläggning.',
 };
@@ -335,6 +355,10 @@ function InstrumentVariant() {
   const [carId, setCarId] = React.useState(init.carId ?? 'tesla3');
   const [carAcLimit, setCarAcLimit] = React.useState(init.carAcLimit ?? C.CAR_AC_LIMIT_KW);
   const [efficiency, setEfficiency] = React.useState(init.efficiency ?? C.DEFAULT_EFFICIENCY);
+  // Lastbalanseringsstrategi (handbok 8.3.1). Styr hur många bilar som kommer
+  // igång samtidigt: PriorityMaxPower ger 16 A start (~4 bilar per hub),
+  // FairSharedPower 8 A (~8 bilar). Total levererad energi är densamma.
+  const [strategy, setStrategy] = React.useState(C.LB_STRATEGY[init.strategy] ? init.strategy : C.DEFAULT_STRATEGY);
   const [projectName, setProjectName] = React.useState(init.projectName ?? '');
   // P4 (v3.7+): Enkel/Avancerad UI-toggle + fastighetstyp-preset
   const [uiMode, setUiMode] = React.useState(init.uiMode ?? 'simple');
@@ -418,7 +442,7 @@ function InstrumentVariant() {
   React.useEffect(() => {
     const s = {
       mode, uiMode, outlets, hubs, capPerHub, systemCap, parkingHours, profileKey,
-      peakOcc, sessionNeedKWh, desiredKWh, occPct, carId, carAcLimit, efficiency,
+      peakOcc, sessionNeedKWh, desiredKWh, occPct, carId, carAcLimit, efficiency, strategy,
       projectName, fuseSizeA, existingLoadPct, materialCost, installationCost,
       electricityPrice, chargingFee, powerTariff, omPctYear, activeDaysPerMonth,
       investmentGrant,
@@ -427,7 +451,7 @@ function InstrumentVariant() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (_) {}
     try { window.history.replaceState(null, '', '#k=' + encodeCalcState(s)); } catch (_) {}
   }, [mode, uiMode, outlets, hubs, capPerHub, systemCap, parkingHours, profileKey,
-      peakOcc, sessionNeedKWh, desiredKWh, occPct, carId, carAcLimit, efficiency,
+      peakOcc, sessionNeedKWh, desiredKWh, occPct, carId, carAcLimit, efficiency, strategy,
       projectName, fuseSizeA, existingLoadPct, materialCost, installationCost,
       electricityPrice, chargingFee, powerTariff, omPctYear, activeDaysPerMonth,
       investmentGrant, scenarios]);
@@ -439,9 +463,9 @@ function InstrumentVariant() {
   const energy = React.useMemo(() => C.computeEnergy({
     outlets, hubs, capPerHub, systemCap,
     parkingHours, profileHours: profile.hours, peakOccupancyPct: peakOcc,
-    hwLimitKW: carAcLimit, efficiency, sessionNeedKWh,
+    hwLimitKW: carAcLimit, efficiency, sessionNeedKWh, strategy,
     profileLabel: profile.label,
-  }), [outlets, hubs, capPerHub, systemCap, parkingHours, profileKey, peakOcc, carAcLimit, efficiency, sessionNeedKWh]);
+  }), [outlets, hubs, capPerHub, systemCap, parkingHours, profileKey, peakOcc, carAcLimit, efficiency, sessionNeedKWh, strategy]);
 
   const sizing = React.useMemo(() => C.computeHubs({
     outlets, desiredKWhPerOutlet: desiredKWh, parkingHours,
@@ -464,53 +488,41 @@ function InstrumentVariant() {
   // där SmartHub-taket sprids på så många bilar att varje får under 2 kW.
   // I energiläget hämtas talet ur kohortsimuleringen (bilar som mött sitt
   // behov står kvar utan att ladda och ska inte ingå i nämnaren).
-  const perCarPeakKW = React.useMemo(() => {
-    if (mode === 'energy') return energy.perCarAtPeakKW ?? null;
-    const activeAtPeak = outlets * occPct;
-    if (activeAtPeak < 0.5 || !isFinite(sizing.effectiveCap)) return null;
-    return sizing.effectiveCap / activeAtPeak;
-  }, [mode, energy.perCarAtPeakKW, sizing.effectiveCap, outlets, occPct]);
-
-  // F2: Kostnad & ROI
-  const economics = React.useMemo(() => {
-    const totalEnergy = mode === 'energy'
-      ? energy.totalEnergyDay
-      : sizing.kwhPerOutletPerDay * outlets;
-    // η-fix: kostnad räknas på INKÖPT energi (före förluster), intäkt på levererad.
-    const gridEnergy = mode === 'energy'
-      ? energy.totalEnergyFromGrid
-      : (sizing.kwhPerOutletPerDay * outlets) / (sizing.efficiency || 1);
-    // fix #4: effekttariffen ska debiteras på faktisk samtidig topp, inte hela installerade
-    // kapaciteten. I hubs-läge = min(systemtak, samtidig efterfrågan vid beläggning).
-    const peakKw = mode === 'energy'
-      ? energy.peakPowerKW
-      : Math.min(sizing.effectiveCap, outlets * occPct * carAcLimit);
-    return C.computeEconomics({
-      materialCost, installationCost,
-      electricityPrice, chargingFee, totalEnergyDay: totalEnergy, gridEnergyDay: gridEnergy,
-      powerTariff, peakPowerKW: peakKw, omPctYear: omPctYear / 100,
-      daysPerMonth: activeDaysPerMonth ?? profile.daysPerMonth ?? 30,
-      investmentGrant,
-    });
-  }, [mode, energy.totalEnergyDay, energy.totalEnergyFromGrid, energy.peakPowerKW,
-      sizing.kwhPerOutletPerDay, sizing.effectiveCap, sizing.efficiency,
-      outlets, occPct, carAcLimit, materialCost, installationCost, electricityPrice, chargingFee,
-      powerTariff, omPctYear, activeDaysPerMonth, profileKey, investmentGrant]);
-
-  // Effektprofil-graf: i hubs-läge måste grafen räknas på sizing.hubs + occPct
-  // (samma som PDF:en, buildPdfData hubs-grenen) — annars motsäger skärmgrafen
-  // både nyckeltalen bredvid och rapporten (auto-hubs/peakOcc ger fel hub-tak).
+  // Effektprofil-graf: i hubs-läge räknas den på sizing.hubs + occPct.
+  // Deklareras FÖRE ekonomin eftersom ekonomin nu läser samma modell —
+  // Babel gör const→var, så fel ordning ger undefined i deps och stale closure.
   const chartEnergy = React.useMemo(() => {
     if (mode === 'energy') return energy;
     return C.computeEnergy({
       outlets, hubs: sizing.hubs, capPerHub, systemCap,
       parkingHours, profileHours: profile.hours,
       peakOccupancyPct: occPct,
-      hwLimitKW: carAcLimit, efficiency,
+      hwLimitKW: carAcLimit, efficiency, strategy,
       sessionNeedKWh: desiredKWh, // i hubs-läget är energimålet bilens behov
       profileLabel: profile.label,
     });
-  }, [mode, energy, sizing.hubs, outlets, capPerHub, systemCap, parkingHours, profileKey, occPct, desiredKWh, carAcLimit, efficiency]);
+  }, [mode, energy, sizing.hubs, outlets, capPerHub, systemCap, parkingHours, profileKey, occPct, desiredKWh, carAcLimit, efficiency, strategy]);
+
+  // Effekt per LADDANDE bil vid samtidig topp kommer nu ur kohortsimuleringen i
+  // båda lägena. Tidigare räknade hubs-läget effekttak / antal närvarande, vilket
+  // gav värden under 6 A — en effekt Amp5 aldrig levererar (handbok 8.3.1).
+  const perCarPeakKW = chartEnergy.perCarAtPeakKW ?? null;
+
+  // F2: Kostnad & ROI — EN modell i båda lägena. computeHubs konstanta beläggning
+  // dygnet runt är rätt för DIMENSIONERING (konservativ värsta-fallstopp) men
+  // överskattade levererad energi upp till 2,3× och gick rakt in i paybacken.
+  // Intäkt och återbetalningstid räknas därför på profilmodellen, samma som grafen.
+  const economics = React.useMemo(() => C.computeEconomics({
+    materialCost, installationCost,
+    electricityPrice, chargingFee,
+    totalEnergyDay: chartEnergy.totalEnergyDay,
+    gridEnergyDay: chartEnergy.totalEnergyFromGrid,
+    powerTariff, peakPowerKW: chartEnergy.peakPowerKW, omPctYear: omPctYear / 100,
+    daysPerMonth: activeDaysPerMonth ?? profile.daysPerMonth ?? 30,
+    investmentGrant,
+  }), [chartEnergy.totalEnergyDay, chartEnergy.totalEnergyFromGrid, chartEnergy.peakPowerKW,
+      materialCost, installationCost, electricityPrice, chargingFee,
+      powerTariff, omPctYear, activeDaysPerMonth, profileKey, investmentGrant]);
 
   const car = C.CARS.find((c) => c.id === carId) || C.CARS[0];
   const heroKWh = mode === 'energy' ? energy.perOutletKWh : sizing.actualEnergyPerOutlet;
@@ -529,9 +541,10 @@ function InstrumentVariant() {
           carAcLimit={carAcLimit} setCarAcLimit={setCarAcLimit}
           efficiency={efficiency} setEfficiency={setEfficiency}
           sessionNeedKWh={sessionNeedKWh} setSessionNeedKWh={setSessionNeedKWh}
+          strategy={strategy}
           projectName={projectName} setProjectName={setProjectName}
           onExportPdf={() => {
-            const data = buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, reportId, projectName });
+            const data = buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, strategy, reportId, projectName });
             exportAsPdf(data);
           }}
         />
@@ -561,6 +574,7 @@ function InstrumentVariant() {
         occPct={occPct} setOccPct={setOccPct}
         carAcLimit={carAcLimit} setCarAcLimit={setCarAcLimit}
         efficiency={efficiency} setEfficiency={setEfficiency}
+        strategy={strategy} setStrategy={setStrategy}
         projectName={projectName} setProjectName={setProjectName}
         fuseSizeA={fuseSizeA} setFuseSizeA={setFuseSizeA}
         existingLoadPct={existingLoadPct} setExistingLoadPct={setExistingLoadPct}
@@ -584,7 +598,7 @@ function InstrumentVariant() {
         parkingHours={parkingHours}
         outlets={outlets} capPerHub={capPerHub} systemCap={systemCap}
         occPct={occPct} desiredKWh={desiredKWh} profileKey={profileKey}
-        carAcLimit={carAcLimit} efficiency={efficiency} sessionNeedKWh={sessionNeedKWh}
+        carAcLimit={carAcLimit} efficiency={efficiency} sessionNeedKWh={sessionNeedKWh} strategy={strategy}
         gridAssessment={gridAssessment} economics={economics}
         perCarPeakKW={perCarPeakKW}
         uiMode={uiMode} powerTariff={powerTariff} omPctYear={omPctYear} existingLoadPct={existingLoadPct}
@@ -592,8 +606,8 @@ function InstrumentVariant() {
           const data = buildPdfData({
             mode, outlets, hubs, capPerHub, systemCap, parkingHours,
             profileKey, peakOcc, desiredKWh, occPct, car,
-            carAcLimit, efficiency, sessionNeedKWh, projectName,
-            energy, sizing, reportId,
+            carAcLimit, efficiency, sessionNeedKWh, strategy, projectName,
+            energy, sizing, chartEnergy, reportId,
             gridAssessment, economics, perCarPeakKW,
           });
           exportAsPdf(data);
@@ -697,7 +711,7 @@ function LeftPanel(p) {
           {p.mode === 'energy' && (
             <SliderField label="Peak-beläggning" value={Math.round(p.peakOcc*100)}
               onChange={(v) => p.setPeakOcc(v/100)} min={5} max={100} step={1} suffix="%"
-              hint="Profilens toppvärde, formen bevaras" />
+              hint="Skalar profilen så toppen når detta värde. Parkeringstiden smetar ut kurvan — faktisk beläggning kan bli jämnare än profilen." />
           )}
           {p.mode === 'energy' && (
             <NumberField label="Energibehov per bil" value={p.sessionNeedKWh}
@@ -711,6 +725,7 @@ function LeftPanel(p) {
       {!isSimple && (
         <Group label="Avancerat">
           <CarAcLimitPicker value={p.carAcLimit} onChange={p.setCarAcLimit} />
+          <StrategyPicker value={p.strategy} onChange={p.setStrategy} />
         </Group>
       )}
 
@@ -733,11 +748,14 @@ function LeftPanel(p) {
         <NumberField label="Investeringsstöd" value={p.investmentGrant}
           onChange={p.setInvestmentGrant} min={0} max={10000000} step={5000} suffix="kr"
           hint="T.ex. Naturvårdsverkets Ladda bilen: 50 % av material + installation, max 15 000 kr per laddpunkt" />
+        {/* Odefinierade prisfält flyttade paybacken mellan 1,3 år och "aldrig"
+            i granskningen. Basen måste stå i klartext på båda fälten. */}
         <NumberField label="Elpris" value={p.electricityPrice}
-          onChange={p.setElectricityPrice} min={0} max={10} step={0.1} suffix="kr/kWh" />
+          onChange={p.setElectricityPrice} min={0} max={10} step={0.1} suffix="kr/kWh"
+          hint="Totalt inköpspris exkl. moms — inkl. elnätsöverföring, energiskatt och påslag, inte bara spotpris" />
         <NumberField label="Laddavgift" value={p.chargingFee}
           onChange={p.setChargingFee} min={0} max={10} step={0.1} suffix="kr/kWh"
-          hint="0 = fri laddning · sätt > elpriset för att beräkna ROI" />
+          hint="Debiterat pris exkl. moms, samma bas som elpriset · 0 = fri laddning" />
         {!isSimple && (
           <>
             <NumberField label="Effekttariff" value={p.powerTariff}
@@ -973,6 +991,48 @@ function CarAcLimitPicker({ value, onChange }) {
   );
 }
 
+// Lastbalanseringsstrategi (handbok 8.3.1). Skillnaden ligger i startströmmen
+// och därmed i hur många bilar som kommer igång samtidigt — inte i hur mycket
+// energi anläggningen levererar totalt.
+function StrategyPicker({ value, onChange }) {
+  const C = window.Amp5Calc;
+  const items = [
+    { v: 'priority', label: 'PriorityMaxPower', sub: '16 A start · standard' },
+    { v: 'fair',     label: 'FairSharedPower',  sub: '8 A start · fler igång' },
+  ];
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: I.ink2, marginBottom: 8 }}>
+        Lastbalansering
+        <span style={{ color: I.mute, fontSize: 11, marginLeft: 6 }}>startström per session</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+        {items.map((it) => {
+          const active = value === it.v;
+          return (
+            <button key={it.v} onClick={() => onChange(it.v)}
+              style={{
+                background: active ? I.ink : I.surface,
+                color: active ? I.bg : I.ink,
+                border: `1px solid ${active ? I.ink : I.line}`,
+                padding: '8px 10px', borderRadius: 2, cursor: 'pointer',
+                display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+                fontFamily: I.sans, textAlign: 'left',
+              }}>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{it.label}</span>
+              <span style={{ fontSize: 10, opacity: 0.7, fontFamily: I.mono }}>{it.sub}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 10.5, color: I.mute, marginTop: 6, lineHeight: 1.45 }}>
+        Startströmmen delas ut i prioritetsordning tills kapaciteten är slut.
+        Sessioner längre ned i ordningen köar — inget fordon laddar under {C.MIN_CHARGE_A} A.
+      </div>
+    </div>
+  );
+}
+
 // ───────── Enkel/Avancerad — fastighetstyp-presets ─────────
 const PROPERTY_PRESETS = {
   brf:    { label: 'BRF / bostad',  profileKey: 'residential', parkingHours: 10, peakOcc: 0.85, occPct: 0.85 },
@@ -1150,7 +1210,7 @@ function FusePicker({ value, onChange }) {
 }
 
 // ───────── F1: GridAssessment display ─────────
-function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, needMet }) {
+function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh100, queue, needMet }) {
   const C = window.Amp5Calc;
   const { status, servisKW, existingKW, availableKW, surplusKW, upgradeCostLow, upgradeCostHigh } = assessment;
   const STATUS_CFG = {
@@ -1159,17 +1219,26 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, needMet
     upgrade:  { color: '#C62828', bg: '#FFEBEE', label: 'Servisutökning krävs' },
   };
   const cfg = STATUS_CFG[status] || STATUS_CFG.ok;
-  // K4: visa per-bil-effekt vid samtidig peak — varna vid trickle-laddning (< 2 kW).
-  // Undertrycks när bilarnas energibehov bevisligen uppfylls (needMet) —
-  // låg effekt per bil är då lastbalansering, inte underdimensionering.
-  const showTrickleWarn = perCarPeakKW != null && perCarPeakKW < C.TRICKLE_LIMIT_KW && !needMet;
+  // Amp5 späder inte ut effekten över alla bilar — den tilldelar startström i
+  // prioritetsordning och köar resten (handbok 8.3.1). Varningen handlar därför
+  // om KÖ, inte om trickle-laddning: den gamla gränsen på 2 kW kunde aldrig nås,
+  // eftersom ingen session körs under 6 A.
   const perCarLimitKW = Math.min(perCarPeakKW || 0, carAcLimit || 11);
+  const present = queue ? queue.presentAtPeak || 0 : 0;
+  const charging = queue ? queue.chargingAtPeak || 0 : 0;
+  const queued = queue ? queue.queuedAtPeak || 0 : 0;
+  const overflow = queue ? queue.sessionOverflowMax || 0 : 0;
+  const queueShare = present > 0.5 ? queued / present : 0;
+  // Kö är normalt och helt i sin ordning så länge bilarna hinner få sin energi.
+  // Överskottsvarningen säger allt kövarningen skulle sagt, och mer — visa inte båda.
+  const showQueueWarn = !needMet && queueShare > 0.4 && charging > 0 && overflow <= 0.5;
   const rows = [
     ['Serviseffekt (√3 × 400 V × A)', `${C.fmt(servisKW, { digits: 0 })} kW`],
     ['Befintlig last',                 `${C.fmt(existingKW, { digits: 0 })} kW`],
     ['Tillgänglig för laddning',       `${C.fmt(availableKW, { digits: 0 })} kW`],
     ['Överskott / underskott',         `${surplusKW >= 0 ? '+' : ''}${C.fmt(surplusKW, { digits: 0 })} kW`],
-    ...(perCarPeakKW != null ? [['Per bil vid samtidig peak', `${C.fmt(perCarLimitKW, { digits: 1 })} kW`]] : []),
+    ...(perCarPeakKW != null ? [['Effekt per laddande bil vid topp', `${C.fmt(perCarLimitKW, { digits: 1 })} kW`]] : []),
+    ...(present > 0.5 ? [['Vid topp: laddar / köar', `${C.fmt(charging, { digits: 0 })} / ${C.fmt(queued, { digits: 0 })} bilar`]] : []),
   ];
   return (
     <div style={{ border: `1px solid ${I.line}`, borderRadius: 2, background: I.surface, overflow: 'hidden' }}>
@@ -1211,15 +1280,30 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, needMet
             💡 Ange <strong>Fastighetseffekttak</strong> (kW) så delar SmartHubbarna automatiskt på den tillgängliga effekten, och elnätsbedömningen blir mer exakt.
           </div>
         )}
-        {showTrickleWarn && (
+        {overflow > 0.5 && (
+          <div style={{
+            marginTop: 10, padding: '10px 12px',
+            background: '#FFEBEE', borderLeft: `3px solid #C62828`,
+            fontSize: 11, color: '#5C1A16', lineHeight: 1.5,
+          }}>
+            ⚠️ <strong>Fler bilar än SmartHuben kan ta sessioner för:</strong> vid topp står{' '}
+            <strong>{C.fmt(overflow, { digits: 0 })} bilar</strong> utan laddsession
+            ({C.fmt(queue.maxPresent, { digits: 0 })} närvarande mot taket {queue.sessionCapacity}).
+            En SmartHub kör max {C.MAX_SESSIONS_PER_HUB} simultana sessioner — lägg till en SmartHub.
+          </div>
+        )}
+        {showQueueWarn && (
           <div style={{
             marginTop: 10, padding: '10px 12px',
             background: '#FFF3E0', borderLeft: `3px solid #E65100`,
             fontSize: 11, color: '#5C2E00', lineHeight: 1.5,
           }}>
-            ⚠️ <strong>Underdimensionerat:</strong> vid samtidig peak får varje aktiv bil bara{' '}
-            <strong>{C.fmt(perCarLimitKW, { digits: 1 })} kW</strong>, det motsvarar bara ~{C.fmt(perCarLimitKW * 6, { digits: 0 })} km räckvidd per timme.
-            Överväg fler SmartHubs eller färre samtidiga uttag för att leverera meningsfull laddning.
+            ⚠️ <strong>Kö vid topplast:</strong> {C.fmt(charging, { digits: 0 })} av{' '}
+            {C.fmt(present, { digits: 0 })} bilar laddar samtidigt à{' '}
+            <strong>{C.fmt(perCarLimitKW, { digits: 1 })} kW</strong>
+            {' '}(≈{C.fmt(C.rangeKm(perCarLimitKW, carKwh100 || 16), { digits: 0 })} km/h),
+            resten väntar på tur. Bilarna når inte sitt energibehov under parkeringen —
+            överväg fler SmartHubs eller färre samtidiga uttag.
           </div>
         )}
       </div>
@@ -1292,7 +1376,8 @@ function EconomicsPanel({ economics }) {
             background: I.forestWash, borderLeft: `3px solid ${I.forestSoft}`,
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           }}>
-            <span style={{ fontSize: 11, color: I.forest }}>Återbetalningstid</span>
+            <span style={{ fontSize: 11, color: I.forest }}>Enkel återbetalningstid<br/>
+              <span style={{ fontSize: 9.5, opacity: 0.8 }}>odiskonterad · priser exkl. moms</span></span>
             <span style={{ fontFamily: I.serif, fontSize: 24, fontWeight: 500, color: I.forest, letterSpacing: -0.5 }}>
               {paybackYears < 1
                 ? `${Math.round(paybackMonths)} mån`
@@ -1318,8 +1403,10 @@ function Footer() {
       <div style={{ fontFamily: I.mono, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase', fontSize: 10 }}>Modell</div>
       Antar WLTP-förbrukning. Ankomsterna rekonstrueras ur beläggningsprofilen
       och faltas med parkeringstidsfönstret, skalat mot vald topp-beläggning.
-      Per-bil-effekten är min(bilens AC-tak, hubens andel) tills bilens
-      energibehov är mött. Vintertid räkna 20–40 % högre energiåtgång.
+      Effekten fördelas som i Amp5:s lastbalansering: startström i
+      prioritetsordning tills kapaciteten är slut, resten köar — inget fordon
+      laddar under 6 A, och en SmartHub kör max 30 simultana sessioner.
+      Vintertid räkna 20–40 % högre energiåtgång.
     </div>
   );
 }
@@ -1327,7 +1414,7 @@ function Footer() {
 // ───────── Compare panel ─────────
 function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setCarId,
                         carAcLimit, setCarAcLimit, efficiency, setEfficiency,
-                        sessionNeedKWh, setSessionNeedKWh,
+                        sessionNeedKWh, setSessionNeedKWh, strategy,
                         projectName, setProjectName, onExportPdf }) {
   const C = window.Amp5Calc;
   const [exporting, setExporting] = React.useState(false);
@@ -1608,7 +1695,7 @@ function CardStat({ label, value, warn }) {
 }
 
 // ───────── Right panel ─────────
-function RightPanel({ mode, energy, sizing, chartEnergy, heroKWh, heroRange, profile, peakOcc, car, carId, setCarId, parkingHours, outlets, capPerHub, systemCap, occPct, desiredKWh, profileKey, carAcLimit, efficiency, sessionNeedKWh, gridAssessment, economics, perCarPeakKW, uiMode, powerTariff, omPctYear, existingLoadPct, onExportPdf }) {
+function RightPanel({ mode, energy, sizing, chartEnergy, heroKWh, heroRange, profile, peakOcc, car, carId, setCarId, parkingHours, outlets, capPerHub, systemCap, occPct, desiredKWh, profileKey, carAcLimit, efficiency, sessionNeedKWh, strategy, gridAssessment, economics, perCarPeakKW, uiMode, powerTariff, omPctYear, existingLoadPct, onExportPdf }) {
   const C = window.Amp5Calc;
   const [exporting, setExporting] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
@@ -1665,7 +1752,7 @@ function RightPanel({ mode, energy, sizing, chartEnergy, heroKWh, heroRange, pro
         </div>
         <div>
           <SectionTitle title="Nyckeltal" />
-          <StatList mode={mode} energy={energy} sizing={sizing} />
+          <StatList mode={mode} energy={energy} sizing={sizing} chartEnergy={chartEnergy} />
         </div>
       </div>
 
@@ -1682,7 +1769,7 @@ function RightPanel({ mode, energy, sizing, chartEnergy, heroKWh, heroRange, pro
           occPct={occPct} peakOcc={peakOcc} desiredKWh={desiredKWh}
           profile={profile}
           carAcLimit={carAcLimit} efficiency={efficiency}
-          sessionNeedKWh={sessionNeedKWh}
+          sessionNeedKWh={sessionNeedKWh} strategy={strategy}
         />
       </div>
 
@@ -1692,8 +1779,9 @@ function RightPanel({ mode, energy, sizing, chartEnergy, heroKWh, heroRange, pro
         <SectionTitle title="Elnätsbedömning" hint="3-fas 400 V · serviskapacitet vs laddningsbehov" />
         <GridAssessment assessment={gridAssessment}
           hubHint={mode === 'hubs' && sizing.effectiveCap > 100}
-          perCarPeakKW={perCarPeakKW} carAcLimit={carAcLimit}
-          needMet={mode === 'energy' && !!energy.needLimited} />
+          perCarPeakKW={perCarPeakKW} carAcLimit={carAcLimit} carKwh100={car.kwh100}
+          queue={chartEnergy}
+          needMet={!!chartEnergy.needLimited} />
       </div>
 
       <Divider />
@@ -1916,14 +2004,16 @@ function Stat({ label, value, small }) {
   );
 }
 
-function StatList({ mode, energy, sizing }) {
+function StatList({ mode, energy, sizing, chartEnergy }) {
   const C = window.Amp5Calc;
   const fmtSessions = (n) => n >= 10 ? C.fmt(n, { digits: 0 }) : C.fmt(n, { digits: 1 });
+  const eng = chartEnergy || energy; // profilbaserad modell (i hubs-läget = grafens)
   const rows = mode === 'energy' ? [
     ['Installerad kapacitet',  `${C.fmt(energy.installedCap, { digits: 0 })} kW`],
     ['Effektiv kapacitet',      `${C.fmt(energy.effectiveCap, { digits: 0 })} kW`],
     ['Topplast / medellast',    `${C.fmt(energy.peakPowerKW, { digits: 0 })} / ${C.fmt(energy.avgPowerKW, { digits: 0 })} kW`],
     ['Aktiva uttag (snitt)',    `${C.fmt(energy.activeOutlets, { digits: 1 })} av ${energy.maxOutlets}`],
+    ['Laddar / köar vid topp',  `${C.fmt(energy.chargingAtPeak, { digits: 0 })} / ${C.fmt(energy.queuedAtPeak, { digits: 0 })} bilar`],
     ['Laddningar / uttag·dygn', fmtSessions(energy.sessionsPerOutletPerDay)],
     ['Totalt laddningar / dygn', fmtSessions(energy.totalSessionsPerDay)],
     ['kWh / uttag·dygn',        `${C.fmt(energy.kwhPerOutletPerDay, { digits: 1 })} kWh`],
@@ -1934,10 +2024,14 @@ function StatList({ mode, energy, sizing }) {
     ['Effektiv kapacitet',      `${C.fmt(sizing.effectiveCap, { digits: 0 })} kW`],
     ['Effekt som krävs',        `${C.fmt(sizing.powerNeeded, { digits: 0 })} kW`],
     ['Hubs pga uttag',          `${sizing.hubsByOutlets}`],
+    ['Hubs pga sessioner',      `${sizing.hubsBySessions}`],
     ['Hubs pga effekt',         `${sizing.hubsByPower}${sizing.hubsByPowerIdeal > sizing.hubsByPower ? ` (idealt ${sizing.hubsByPowerIdeal})` : ''}`],
-    ['Laddningar / uttag·dygn', fmtSessions(sizing.sessionsPerOutletPerDay)],
-    ['Totalt laddningar / dygn', fmtSessions(sizing.totalSessionsPerDay)],
-    ['kWh / uttag·dygn',        `${C.fmt(sizing.kwhPerOutletPerDay, { digits: 1 })} kWh`],
+    // Energiraderna kommer från profilmodellen — samma som grafen och ekonomin.
+    // computeHubs konstanta beläggning dygnet runt är rätt för dimensionering
+    // men överskattade levererad energi med upp till 2,3× (granskningsfynd B1).
+    ['Laddningar / uttag·dygn', fmtSessions(eng.sessionsPerOutletPerDay)],
+    ['Totalt laddningar / dygn', fmtSessions(eng.totalSessionsPerDay)],
+    ['kWh / uttag·dygn',        `${C.fmt(eng.kwhPerOutletPerDay, { digits: 1 })} kWh`],
     ['Faktisk kWh / uttag',
       sizing.achievesTarget
         ? `${C.fmt(sizing.actualEnergyPerOutlet, { digits: 1 })} kWh · +${C.fmt(sizing.headroomKWh, { digits: 1 })} marginal`
@@ -1946,6 +2040,13 @@ function StatList({ mode, energy, sizing }) {
   ];
   return (
     <div style={{ border: `1px solid ${I.line}`, borderRadius: 2, background: I.surface }}>
+      {mode === 'hubs' && (
+        <div style={{ padding: '10px 16px', fontSize: 10.5, color: I.mute, lineHeight: 1.5, borderBottom: `1px solid ${I.line}`, background: I.bg }}>
+          Hubbantalet dimensioneras mot värsta fall (full beläggning hela
+          parkeringsfönstret). Energiraderna räknas på beläggningsprofilen —
+          samma modell som grafen och investeringskalkylen.
+        </div>
+      )}
       {rows.map(([k, v], i) => (
         <div key={k} style={{
           display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
@@ -1960,7 +2061,7 @@ function StatList({ mode, energy, sizing }) {
   );
 }
 
-function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerHub, systemCap, occPct, peakOcc, desiredKWh, profile, carAcLimit, efficiency, sessionNeedKWh }) {
+function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerHub, systemCap, occPct, peakOcc, desiredKWh, profile, carAcLimit, efficiency, sessionNeedKWh, strategy }) {
   const C = window.Amp5Calc;
   const width = 640, height = 200, pad = { l: 48, r: 16, t: 16, b: 40 };
   const innerW = width - pad.l - pad.r;
@@ -1973,7 +2074,7 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
         const e = C.computeEnergy({
           outlets, hubs: energy.hubs, capPerHub, systemCap,
           parkingHours: h, profileHours: profile.hours, peakOccupancyPct: peakOcc,
-          hwLimitKW: carAcLimit, efficiency, sessionNeedKWh,
+          hwLimitKW: carAcLimit, efficiency, sessionNeedKWh, strategy,
         });
         vals.push({ x: h, y: e.perOutletKWh });
       }
@@ -2026,7 +2127,7 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
     };
   }, [mode, outlets, capPerHub, systemCap, profile, peakOcc, occPct,
       parkingHours, desiredKWh, energy.hubs, energy.perOutletKWh, energy.needLimited,
-      energy.peakReductionKW, sizing.hubs, carAcLimit, efficiency, sessionNeedKWh]);
+      energy.peakReductionKW, sizing.hubs, carAcLimit, efficiency, sessionNeedKWh, strategy]);
 
   const xMin = Math.min(...points.map((p) => p.x));
   const xMax = Math.max(...points.map((p) => p.x));

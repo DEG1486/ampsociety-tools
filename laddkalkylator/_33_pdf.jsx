@@ -205,7 +205,15 @@ function summarizeInputs(data) {
 // Chart — hourly power over day
 // --------------------------------------------------------------------------
 
+// Saknas timserien ritas INGEN graf. Tidigare fyllde anropen i en påhittad
+// platt kurva på halva kapaciteten — en uppdiktad graf i ett kunddokument är
+// värre än ingen graf alls (granskningsfynd D2).
+function hasHourly(hourly) {
+  return Array.isArray(hourly) && hourly.length === 24 && hourly.every((v) => Number.isFinite(v));
+}
+
 function PowerChart({ hourly, cap, height = 140, width = 682, theme = 'light' }) {
+  if (!hasHourly(hourly)) return null;
   // Golv på 1 så vi aldrig delar med 0 (NaN-koordinater) när cap/hourly är 0.
   const max = Math.max(cap, ...hourly, 1) * 1.08;
   const ax = { left: 32, right: 10, top: 8, bottom: 22 };
@@ -254,10 +262,12 @@ function PowerChart({ hourly, cap, height = 140, width = 682, theme = 'light' })
   );
 }
 
-// Range bar: en stapel per plats. Alla platser får samma energi i modellen, så
-// ALLA staplar fylls (granskningsfynd: gamla frac-logiken lämnade alltid ~17 %
-// bleka staplar — lästes som att vissa platser blev utan laddning). Höjden
-// kodar räckvidden mot en fast referens så grafiken är jämförbar mellan rapporter.
+// Range bar: en stapel per plats, alla lika höga eftersom MODELLEN ger alla
+// platser samma energi. Det är ett modellgenomsnitt, inte en utfästelse:
+// Amp5 fördelar efter prioritet och kö (handbok 8.3.1, 8.5), så enskilda bilar
+// får olika mycket. Bildtexten måste säga det (granskningsfynd A3).
+// Höjden kodar räckvidden mot en fast referens så grafiken är jämförbar
+// mellan rapporter.
 function RangeStrip({ perOutletKm, outlets, width = 682, height = 60 }) {
   const N = Math.min(outlets, 80);
   const gap = 4;
@@ -283,7 +293,7 @@ function RangeStrip({ perOutletKm, outlets, width = 682, height = 60 }) {
 
 // Varningar som skärmen visar men rapporten tidigare teg om (granskningsfynd):
 // missat energimål i hubs-läget och trickle-laddning vid samtidig peak.
-// Trösklar/texter delas med UI:t via Amp5Calc (TRICKLE_LIMIT_KW, LIMIT_REASON_LABEL).
+// Texter och trösklar delas med UI:t via Amp5Calc (LIMIT_REASON_LABEL, MAX_SESSIONS_PER_HUB).
 function pdfWarnings(data) {
   const Amp = window.Amp5Calc;
   const warns = [];
@@ -293,11 +303,26 @@ function pdfWarnings(data) {
       + `systemet levererar ${Amp.fmt(data.outputs.actualEnergyPerOutlet, { digits: 1 })} kWh `
       + `(${Amp.fmt(data.outputs.shortfallKWh, { digits: 1 })} kWh under målet), ${reason}.`);
   }
-  // Samma undertryckning som UI:t: uppfyllt energibehov = lastbalansering, inte underdimensionering.
-  const needMet = data.mode === 'energy' && data.outputs && data.outputs.needLimited;
-  if (data.perCarPeakKW != null && data.perCarPeakKW < Amp.TRICKLE_LIMIT_KW && !needMet) {
-    warns.push(`Underdimensionerat: vid samtidig topplast får varje laddande bil endast `
-      + `ca ${Amp.fmt(data.perCarPeakKW, { digits: 1 })} kW.`);
+  // Kö och sessionstak (handbok 3.1, 8.3.1). Ersätter den gamla trickle-varningen,
+  // som utgick från att effekten späds ut jämnt över alla bilar — det gör Amp5 inte.
+  const q = data.queue;
+  if (q) {
+    if ((q.sessionOverflowMax || 0) > 0.5) {
+      warns.push(`Fler bilar än SmartHubben tar sessioner för: vid topp står `
+        + `${Amp.fmt(q.sessionOverflowMax, { digits: 0 })} bilar utan laddsession `
+        + `(${Amp.fmt(q.maxPresent, { digits: 0 })} närvarande mot taket ${q.sessionCapacity}). `
+        + `En SmartHub kör max ${Amp.MAX_SESSIONS_PER_HUB} simultana sessioner.`);
+    }
+    const present = q.presentAtPeak || 0;
+    const queueShare = present > 0.5 ? (q.queuedAtPeak || 0) / present : 0;
+    // Visa inte kövarningen när överskottsvarningen redan täcker samma sak.
+    if (!q.needLimited && queueShare > 0.4 && (q.chargingAtPeak || 0) > 0
+        && (q.sessionOverflowMax || 0) <= 0.5) {
+      warns.push(`Kö vid topplast: ${Amp.fmt(q.chargingAtPeak, { digits: 0 })} av `
+        + `${Amp.fmt(present, { digits: 0 })} bilar laddar samtidigt à `
+        + `ca ${Amp.fmt(q.perCarAtPeakKW, { digits: 1 })} kW, resten väntar på tur. `
+        + `Bilarna når inte sitt energibehov under parkeringen.`);
+    }
   }
   return warns;
 }
@@ -413,7 +438,8 @@ function PDFEditorial({ data }) {
           </div>
         </div>
 
-        {/* chart */}
+        {/* chart — hela blocket utgår om timserien saknas, rubrik och allt */}
+        {hasHourly(data.outputs.hourly) && (
         <div style={{ margin: '28px 56px 0 56px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
@@ -422,16 +448,26 @@ function PDFEditorial({ data }) {
             </div>
             <div style={{ fontFamily: BRAND.mono, fontSize: 10, color: BRAND.mute, letterSpacing: 1 }}>kW · {data.inputs.profileLabel || 'Profil'}</div>
           </div>
-          <PowerChart hourly={data.outputs.hourly || new Array(24).fill(data.outputs.effectiveCap * 0.5)} cap={data.outputs.effectiveCap} height={130} width={682} />
+          <PowerChart hourly={data.outputs.hourly} cap={data.outputs.effectiveCap} height={130} width={682} />
         </div>
+        )}
 
         <PDFFooter page={1} total={2} date={data.meta.date} version={data.meta.version} />
       </Page>
 
       {/* =========== PAGE 2 =========== */}
       <Page id="ed-2">
+        {/* Sida 2 är en flexkolumn där miljöbilden är det elastiska elementet.
+            Tidigare hade bilden fast höjd med en handtrimmad specialregel för
+            varningsremsan — när antagande- eller friskrivningstexten växte sköts
+            den i stället ut ur sidan och klipptes bort tyst (overflow: hidden).
+            Nu ger bilden ifrån sig utrymme automatiskt och texten överlever. */}
+        <div style={{
+          height: '100%', display: 'flex', flexDirection: 'column',
+          paddingBottom: 54, boxSizing: 'border-box',
+        }}>
         {/* range strip hero */}
-        <div style={{ padding: '56px 56px 0 56px' }}>
+        <div style={{ padding: '40px 56px 0 56px' }}>
           <Eyebrow>Räckvidd per plats</Eyebrow>
           <div style={{ height: 14 }} />
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
@@ -448,7 +484,8 @@ function PDFEditorial({ data }) {
           <RangeStrip perOutletKm={rangeKm} outlets={data.inputs.outlets} width={682} />
           <div style={{ height: 10 }} />
           <div style={{ fontSize: 10, color: BRAND.mute, fontFamily: BRAND.mono, letterSpacing: 0.6, textTransform: 'uppercase' }}>
-            En stapel = en plats — alla platser får samma energi. Höjd = räckvidd (skala 0–400 km).
+            En stapel = en plats. Höjd = modellens genomsnittliga räckvidd per plats (skala 0–400 km).
+            Faktisk fördelning mellan bilar styrs av lastbalanseringens prioritetsordning.
           </div>
         </div>
 
@@ -465,11 +502,14 @@ function PDFEditorial({ data }) {
           <EconomicsSectionPDF economics={data.economics} />
         )}
 
-        {/* Environment image — Amp5 exterior parking. Lägre när varningsremsan
-            tar plats, så sida 2 aldrig trycker friskrivningen förbi sidslutet. */}
+        {/* Environment image — Amp5 exterior parking. Elastisk: tar det utrymme
+            som blir över när texten fått sitt. Finns varningar att visa utgår
+            bilden helt — en dekorativ bild ska aldrig tränga undan en varning
+            eller friskrivningen (sidan har overflow: hidden och klipper tyst). */}
+        {warns.length ? <div style={{ flex: '1 1 0', minHeight: 8 }} /> : (
         <div style={{
           margin: '16px 56px 0 56px',
-          height: warns.length ? 84 : 130,
+          flex: '1 1 0', minHeight: 40, maxHeight: 130,
           position: 'relative', overflow: 'hidden',
           background: '#0F0C0B',
         }}>
@@ -482,11 +522,12 @@ function PDFEditorial({ data }) {
             </div>
           </div>
         </div>
+        )}
 
         {/* CTA block with orange wash */}
         <div style={{
-          margin: '24px 56px 0 56px',
-          background: BRAND.accentWash, padding: '32px 32px',
+          margin: '16px 56px 0 56px',
+          background: BRAND.accentWash, padding: '22px 32px',
           display: 'grid', gridTemplateColumns: '1fr 112px', gap: 24, alignItems: 'center',
         }}>
           <div>
@@ -512,15 +553,19 @@ function PDFEditorial({ data }) {
         </div>
 
         {/* Assumptions */}
-        <div style={{ margin: '18px 56px 0 56px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28 }}>
+        <div style={{ margin: '12px 56px 0 56px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28 }}>
           <div>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 8 }}>Antaganden</div>
             <div style={{ fontSize: 10.5, lineHeight: 1.6, color: BRAND.ink2 }}>
-              Beräkningen utgår från ett SmartHub-system med {data.const.capPerHub} kW per hub och {data.const.outletsPerHub} uttag per hub.
+              Beräkningen utgår från ett SmartHub-system med {data.const.capPerHub} kW max simultan
+              laddeffekt per hub, {data.const.outletsPerHub} uttag och {Amp.MAX_SESSIONS_PER_HUB} simultana
+              laddsessioner per hub.
               Beläggningsprofilen <em>{data.inputs.profileLabel}</em> faltas med
               parkeringstidsfönstret och skalas så att profilens topp matchar
-              vald topp-beläggning. Per-bil-effekten begränsas av bilens
-              AC-laddartak.
+              vald topp-beläggning — faltningen kan ge en jämnare kurva än
+              profilen. Effekten fördelas som i Amp5:s lastbalansering
+              ({data.const.strategy}): startström i prioritetsordning tills
+              kapaciteten är slut, resten köar — inget fordon laddar under 6 A.
               {data.mode === 'energy' && data.inputs.sessionNeedKWh > 0
                 ? <> Varje bil antas behöva högst {data.inputs.sessionNeedKWh} kWh per laddtillfälle.</>
                 : null}
@@ -530,12 +575,15 @@ function PDFEditorial({ data }) {
           <div>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 8 }}>Ansvar & risker</div>
             <div style={{ fontSize: 10.5, lineHeight: 1.6, color: BRAND.ink2 }}>
-              Siffrorna är indikativa (±25 %) och ersätter inte projektering eller
-              bindande offert från nätägaren. Servisutökning, försäkring,
-              vandalisering och kabelstöld omfattas ej. Installation ska utföras
-              av behörig elinstallatör enligt ELSÄK-FS.
+              Siffrorna är modellberäkningar på era indata och ersätter inte
+              projektering eller bindande offert från nätägaren. Verkligt utfall
+              styrs av fordonsmix, årstid och faktiskt laddbeteende. Priser anges
+              exkl. moms. Servisutökning, försäkring, vandalisering och kabelstöld
+              omfattas ej. Installation ska utföras av behörig elinstallatör
+              enligt ELSÄK-FS.
             </div>
           </div>
+        </div>
         </div>
 
         <PDFFooter page={2} total={2} date={data.meta.date} version={data.meta.version} />
@@ -621,7 +669,8 @@ function PDFTechnical({ data }) {
           </table>
         </div>
 
-        {/* Chart */}
+        {/* Chart — utgår i sin helhet om timserien saknas (se hasHourly) */}
+        {hasHourly(data.outputs.hourly) && (
         <div style={{ padding: '24px 56px 0 56px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10 }}>
             <Balk width={20} color={BRAND.ink} height={3} style={{ position: 'relative', top: -4 }} />
@@ -630,8 +679,9 @@ function PDFTechnical({ data }) {
               KW · PROFIL: {(data.inputs.profileLabel || '').toUpperCase()}
             </div>
           </div>
-          <PowerChart hourly={data.outputs.hourly || new Array(24).fill(data.outputs.effectiveCap * 0.5)} cap={data.outputs.effectiveCap} height={150} width={682} />
+          <PowerChart hourly={data.outputs.hourly} cap={data.outputs.effectiveCap} height={150} width={682} />
         </div>
+        )}
 
         {/* Output metrics grid */}
         <div style={{ padding: '24px 56px 0 56px' }}>
@@ -682,13 +732,13 @@ function PDFTechnical({ data }) {
           <div>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 10 }}>Beräkningsmetod</div>
             <div style={{ fontSize: 10.5, lineHeight: 1.6, color: BRAND.ink2 }}>
-              Närvaron per timme härleds genom att falta profilens
-              ankomstfördelning (stigande flank) med parkeringstidsfönstret.
-              Resultatet skalas så att <em>topp</em>-beläggningen matchar
-              slidervärdet. Effekten per aktiv bil är
-              <em> min(P<sub>bil</sub>, P<sub>eff</sub> / n<sub>aktiv</sub>)</em>,
-              där P<sub>bil</sub> är AC-laddartaket och P<sub>eff</sub>
-              är min(installerad effekt, systemtak).
+              Ankomsterna rekonstrueras ur beläggningsprofilen (dekonvolution)
+              och faltas med parkeringstidsfönstret. Resultatet skalas så att
+              <em> topp</em>-beläggningen matchar slidervärdet; faltningen kan ge
+              en jämnare kurva än profilen. Effekten per aktiv bil är
+              <em> min(P<sub>bil</sub>, P<sub>eff</sub> / n<sub>aktiv</sub>)</em>
+              tills bilens energibehov är mött, där P<sub>bil</sub> är
+              AC-laddartaket och P<sub>eff</sub> är min(installerad effekt, systemtak).
             </div>
           </div>
           <div>
@@ -696,12 +746,22 @@ function PDFTechnical({ data }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10.5 }}>
               <tbody>
                 <tr style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
-                  <td style={{ padding: '6px 0', color: BRAND.mute }}>Kapacitet per SmartHub</td>
+                  <td style={{ padding: '6px 0', color: BRAND.mute }}>Max simultan effekt / hub</td>
                   <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: BRAND.mono }}>{data.const.capPerHub} kW</td>
                 </tr>
                 <tr style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
                   <td style={{ padding: '6px 0', color: BRAND.mute }}>Uttag per SmartHub</td>
                   <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: BRAND.mono }}>{data.const.outletsPerHub} st</td>
+                </tr>
+                {/* Handbokens precisionsregel: "54 uttag" får aldrig stå ensamt
+                    i externt material utan det här talet (granskningsfynd A4). */}
+                <tr style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
+                  <td style={{ padding: '6px 0', color: BRAND.mute }}>Simultana laddsessioner / hub</td>
+                  <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: BRAND.mono }}>{Amp.MAX_SESSIONS_PER_HUB} st</td>
+                </tr>
+                <tr style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
+                  <td style={{ padding: '6px 0', color: BRAND.mute }}>Lastbalansering</td>
+                  <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: BRAND.mono, fontSize: 9.5 }}>{data.const.strategy}</td>
                 </tr>
                 <tr style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
                   <td style={{ padding: '6px 0', color: BRAND.mute }}>Profil</td>
@@ -884,16 +944,18 @@ function PDFCompare({ data }) {
         <div>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 8 }}>Beräkningsmetod</div>
           <div style={{ fontSize: 10, lineHeight: 1.55, color: BRAND.ink2 }}>
-            Närvaron per timme härleds genom att falta profilens ankomstfördelning
-            (stigande flank) med parkeringstidsfönstret. Resultatet skalas så att
+            Ankomsterna rekonstrueras ur beläggningsprofilen (dekonvolution) och
+            faltas med parkeringstidsfönstret. Resultatet skalas så att
             <em> topp</em>-beläggningen matchar slidervärdet. Effekten per aktiv bil är
-            <em> min(P<sub>bil</sub>, P<sub>eff</sub>/n<sub>aktiv</sub>)</em>.
+            <em> min(P<sub>bil</sub>, P<sub>eff</sub>/n<sub>aktiv</sub>)</em> tills
+            energibehovet är mött.
           </div>
         </div>
         <div>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 8 }}>Konstanter</div>
           <div style={{ fontSize: 10, lineHeight: 1.55, color: BRAND.ink2 }}>
-            SmartHub: {data.const.capPerHub} kW per enhet, {data.const.outletsPerHub} uttag/hub.
+            SmartHub: {data.const.capPerHub} kW max simultan effekt, {data.const.outletsPerHub} uttag
+            och {Amp.MAX_SESSIONS_PER_HUB} simultana laddsessioner per hub.
             Bilens AC-tak: {data.const.carAcLimit ?? Amp.HW_LIMIT_KW} kW.
             Verkningsgrad: {Math.round((data.const.efficiency ?? Amp.DEFAULT_EFFICIENCY) * 100)}%.
             {data.const.sessionNeedKWh > 0
@@ -999,6 +1061,7 @@ function EconomicsSectionPDF({ economics }) {
     capitalCost, materialCost, installationCost, investmentGrant, netCapitalCost,
     monthlyEnergyCost, monthlyPowerCost, monthlyOmCost,
     monthlyRevenue, monthlyEnergyKWh, paybackYears, paybackMonths,
+    electricityPrice, chargingFee, daysPerMonth,
   } = economics;
   const hasGrant = (investmentGrant || 0) > 0;
   const hasRevenue = monthlyRevenue > 0;
@@ -1006,7 +1069,7 @@ function EconomicsSectionPDF({ economics }) {
   const monthlyTotalCost = (monthlyEnergyCost || 0) + (monthlyPowerCost || 0) + (monthlyOmCost || 0);
   // Tredje kolumn: återbetalningstid om möjlig, annars intäkt om satt, annars energi/mån
   const thirdCol = hasRevenue && paybackYears != null
-    ? { label: 'Återbetalningstid', v: paybackYears < 1 ? `${Math.round(paybackMonths)}` : Amp.fmt(paybackYears, { digits: 1 }), u: paybackYears < 1 ? 'mån' : 'år' }
+    ? { label: 'Återbetalning (enkel)', v: paybackYears < 1 ? `${Math.round(paybackMonths)}` : Amp.fmt(paybackYears, { digits: 1 }), u: paybackYears < 1 ? 'mån' : 'år' }
     : hasRevenue
       ? { label: 'Intäkt / månad', v: Amp.fmt(monthlyRevenue, { digits: 0 }), u: 'kr' }
       : { label: 'Energi / månad', v: Amp.fmt(monthlyEnergyKWh, { digits: 0 }), u: 'kWh' };
@@ -1066,6 +1129,17 @@ function EconomicsSectionPDF({ economics }) {
           {(monthlyOmCost || 0) > 0 && ` + ${Amp.fmt(monthlyOmCost, { digits: 0 })} kr D&U`}
         </div>
       </div>
+      {/* Priserna bakom paybacken måste stå i rapporten — annars kan mottagaren
+          inte kontrollräkna rubriktalet (granskningsfynd E3/E4). */}
+      <div style={{ marginTop: 6, fontSize: 9, color: BRAND.mute, lineHeight: 1.5 }}>
+        <strong style={{ color: BRAND.ink2 }}>Antaganden: </strong>
+        elpris {Amp.fmt(electricityPrice || 0, { digits: 2 })} kr/kWh ·
+        laddavgift {chargingFee > 0 ? `${Amp.fmt(chargingFee, { digits: 2 })} kr/kWh` : 'ingen, fri laddning'} ·
+        {' '}{Amp.fmt(daysPerMonth || 30, { digits: 0 })} laddningsdagar/mån ·
+        {' '}{Amp.fmt(monthlyEnergyKWh || 0, { digits: 0 })} kWh levererat/mån
+        {hasRevenue ? ` · intäkt ${Amp.fmt(monthlyRevenue, { digits: 0 })} kr/mån` : ''}.
+        {' '}Priser exkl. moms. Återbetalningstiden är enkel och odiskonterad.
+      </div>
     </div>
   );
 }
@@ -1104,7 +1178,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.7',
+      version: '3.8',
     },
   };
 }
