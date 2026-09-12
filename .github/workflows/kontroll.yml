@@ -1,0 +1,34 @@
+# Kontrollerar räknemotorn och bygget vid varje push.
+#
+# Bakgrund: v3.8–v3.8.3 skrevs om i tre vändor och varje vända införde nya fel
+# som bara nästa granskning hittade. Invariantsviten är det som fångar dem, och
+# den är bara värd något om den faktiskt körs. Därför här, inte bara lokalt.
+#
+# Byggkontrollen fångar en annan tyst klass: appen är en enda HTML-fil med
+# källkoden komprimerad inuti, så en ändrad källfil utan omkört build37.ps1
+# committas utan att något säger ifrån — och fixen syns aldrig live.
+
+name: Kontroll
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  raknemotor:
+    name: Invarianter och bygge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Invariantsvit (~69 000 fall)
+        run: node laddkalkylator/test-invarianter.mjs
+
+      - name: index.html i synk med källkoden
+        run: node laddkalkylator/verifiera-bygge.mjs
