@@ -66,6 +66,29 @@ if ($html.Contains($revokeGammal)) {
     $html = $html.Replace($revokeGammal, 'setTimeout(revokeAll, 20000)')
 }
 
+# ...men marginalen ensam racker inte. document.fonts.ready lovar bara att
+# PAGAENDE laddningar ar klara; varianter som annu inte anvants ar olastade, och
+# nar blob-URL:en revokeras kan de ALDRIG hamtas. GT Super 700 (compare-lagets
+# scenariosiffror, PDF:ens stora tal) och GT Super kursiv (PDF:ens citat) anvands
+# forst nar man byter lage eller exporterar - dvs nastan alltid efter
+# revokeringen - och foll da tyst tillbaka pa Georgia. Alla deklarerade
+# varianter tvingas darfor in i minnet innan blobbarna slapps.
+$vantaGammal = 'try { await document.fonts?.ready; } catch (_) {}'
+$vantaNy = @'
+try { await document.fonts?.ready; } catch (_) {}
+      // Tvinga in ALLA deklarerade typsnittsvarianter innan blobbarna slapps.
+      // fonts.ready lovar bara att PAGAENDE laddningar ar klara - varianter som
+      // annu inte anvants ar olastade, och nar blob-URL:en sedan revokeras kan
+      // de ALDRIG hamtas. Foljden var att GT Super 700 (compare-lagets
+      // scenariosiffror, PDF:ens stora tal) och GT Super kursiv (PDF:ens citat)
+      // foll tyst tillbaka pa Georgia sa fort man bytte lage eller exporterade
+      // mer an en stund efter sidladdningen.
+      try { await Promise.all([...document.fonts].map((f) => f.load().catch(() => {}))); } catch (_) {}
+'@
+if ($html.Contains($vantaGammal) -and -not $html.Contains('[...document.fonts].map')) {
+    $html = $html.Replace($vantaGammal, $vantaNy.TrimEnd("`r", "`n"))
+}
+
 # Start the minimum display time while the bundled assets unpack in parallel.
 $startupHook = "document.addEventListener('DOMContentLoaded', async function() {"
 $startupTimer = @'
@@ -78,7 +101,10 @@ if (-not $html.Contains($startupHook) -or -not $html.Contains($swapHook)) {
 }
 $html = $html.Replace($startupHook, $startupTimer)
 $html = $html.Replace($swapHook, "await startupReady;`n    $swapHook")
-[IO.File]::WriteAllText($outputPath, $html, [Text.UTF8Encoding]::new($false))
+# Skrivs MED BOM, som build37.ps1 gor. Annars beror filens forsta tre bytes pa
+# vilket skript som rakade koras sist, och index.html andras i git utan att
+# nagot i innehallet skiljer sig.
+[IO.File]::WriteAllText($outputPath, $html, [Text.UTF8Encoding]::new($true))
 
 # A separate, stationary preview lets the design be reviewed without delaying startup.
 $preview = "<!DOCTYPE html><html lang=`"sv`"><head><meta charset=`"utf-8`"><meta name=`"viewport`" content=`"width=device-width,initial-scale=1`"><title>AmpSociety · Förhandsvisning av startskärm</title><style>$css</style></head><body>$screen</body></html>"

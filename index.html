@@ -204,6 +204,14 @@ document.addEventListener('DOMContentLoaded', async function() {
     const revokeAll = () => Object.values(blobUrls).forEach(u => URL.revokeObjectURL(u));
     const onSettled = async () => {
       try { await document.fonts?.ready; } catch (_) {}
+      // Tvinga in ALLA deklarerade typsnittsvarianter innan blobbarna slapps.
+      // fonts.ready lovar bara att PAGAENDE laddningar ar klara - varianter som
+      // annu inte anvants ar olastade, och nar blob-URL:en sedan revokeras kan
+      // de ALDRIG hamtas. Foljden var att GT Super 700 (compare-lagets
+      // scenariosiffror, PDF:ens stora tal) och GT Super kursiv (PDF:ens citat)
+      // foll tyst tillbaka pa Georgia sa fort man bytte lage eller exporterade
+      // mer an en stund efter sidladdningen.
+      try { await Promise.all([...document.fonts].map((f) => f.load().catch(() => {}))); } catch (_) {}
       setTimeout(revokeAll, 20000);
     };
     if (document.readyState === 'complete') onSettled();
