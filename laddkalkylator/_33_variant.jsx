@@ -2295,7 +2295,17 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
             : powerLimited
             ? (kneeX != null && !kneeNeedBound
                 ? <>⚡ <strong>Effektbegränsat.</strong> Hubbarna går maxade nästan hela dygnet. Bortom ~{kneeX} h parkering ger längre tid knappt mer energi per bil. Vill ni leverera mer: <strong>fler SmartHubs eller högre effekt</strong>, inte längre parkeringstid.</>
-                : <>⚡ <strong>Effektbegränsat.</strong> Hubbarna räcker inte för antalet platser. Effekten delas inte ut jämnt — de bilar som ryms får full startström och resten står i kö tills kapacitet frigörs. Vill ni leverera mer energi per bil: <strong>fler SmartHubs eller högre effekt</strong>.</>)
+                // Den här grenen gäller den LINJÄRA kurvan (jämn profil, inget knä).
+                // Texten sa tidigare "hubbarna räcker inte för antalet platser",
+                // vilket pekade ut fel flaskhals: en hub tar 54 uttag och 30
+                // sessioner, så platsantalet binder nästan aldrig — det är effekten
+                // mot antalet samtidigt närvarande bilar som gör det. Värre var att
+                // texten inte förklarade varför kurvan ändå stiger brant: total
+                // dygnsenergi är KONSTANT när hubbarna går maxade, och kurvan stiger
+                // bara för att färre sessioner delar på samma energi. Utan den
+                // meningen läser man kurvan som att längre parkeringstid löser
+                // underdimensioneringen.
+                : <>⚡ <strong>Effektbegränsat.</strong> Hubbarnas effekt räcker inte för alla bilar samtidigt — de som ryms får full startström, resten köar tills kapacitet frigörs. Anläggningen går redan på sitt tak dygnet runt, så kurvan stiger bara för att färre bilar delar på samma energi: <strong>mer per bil, men färre laddade bilar</strong>. Vill ni höja totalen: <strong>fler SmartHubs eller högre effekt</strong>.</>)
             : <>🕓 <strong>Tidsbegränsat.</strong> Systemet har effektmarginal, så <strong>längre parkeringstid ger i huvudsak mer energi</strong> per bil{kneeNeedBound && kneeX != null ? <> — upp till behovet ({C.fmt(sessionNeedKWh, { digits: 0 })} kWh) som nås vid ~{kneeX} h</> : null}.</>}
         </div>
       )}
