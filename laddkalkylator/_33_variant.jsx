@@ -1397,6 +1397,7 @@ function EconomicsPanel({ economics }) {
     monthlyEnergyKWh, monthlyEnergyCost, monthlyPowerCost, monthlyOmCost,
     monthlyRevenue, monthlyNet,
     paybackMonths, paybackYears,
+    lccYears, lccEnergyCost, lccPowerCost, lccOmCost, lccTotal, lccRevenue, lccNet, lcoe,
   } = economics;
   const fmtKr = (kr) => kr >= 1_000_000
     ? `${C.fmt(kr / 1_000_000, { digits: 1 })} Mkr`
@@ -1468,6 +1469,67 @@ function EconomicsPanel({ economics }) {
             {hasRevenue
               ? 'Investering återbetalar sig ej med nuvarande inställningar.'
               : 'Ange en laddavgift (kr/kWh) för att beräkna återbetalningstid.'}
+          </div>
+        )}
+
+        {/* Livscykelkostnad. Odiskonterad, som paybacken ovan — att blanda ett
+            nuvärdesberäknat tal med en odiskonterad payback i samma ruta vore
+            att visa två siffror som ser jämförbara ut men inte är det.
+            LCoE är talet att hålla mot ett laddoperatörsavtal: vad varje
+            levererad kWh kostar när investeringen slås ut över perioden. */}
+        {lccTotal > 0 && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${I.line}` }}>
+            <div style={{
+              fontFamily: I.mono, fontSize: 9.5, letterSpacing: 1,
+              textTransform: 'uppercase', color: I.mute, marginBottom: 8,
+            }}>
+              Livscykelkostnad {lccYears} år
+            </div>
+            {[
+              ['Investering', fmtKr(netCapitalCost)],
+              ['Energi', fmtKr(lccEnergyCost)],
+              ...(lccPowerCost > 0 ? [['Effektavgift', fmtKr(lccPowerCost)]] : []),
+              ...(lccOmCost > 0 ? [['Drift & underhåll', fmtKr(lccOmCost)]] : []),
+            ].map(([k, v]) => (
+              <div key={k} style={{
+                display: 'flex', justifyContent: 'space-between',
+                fontSize: 11, padding: '5px 0', borderBottom: `1px solid ${I.lineSoft}`,
+              }}>
+                <span style={{ color: I.mute }}>{k}</span>
+                <span style={{ fontFamily: I.mono, color: I.ink, fontFeatureSettings: '"tnum"' }}>{v}</span>
+              </div>
+            ))}
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+              padding: '8px 0 4px', fontSize: 12, fontWeight: 600,
+            }}>
+              <span style={{ color: I.ink }}>Total kostnad {lccYears} år</span>
+              <span style={{ fontFamily: I.mono, color: I.ink, fontFeatureSettings: '"tnum"' }}>{fmtKr(lccTotal)}</span>
+            </div>
+            {hasRevenue && (
+              <div style={{
+                display: 'flex', justifyContent: 'space-between',
+                fontSize: 11, padding: '5px 0', borderTop: `1px solid ${I.lineSoft}`,
+              }}>
+                <span style={{ color: I.mute }}>− laddintäkter · netto</span>
+                <span style={{ fontFamily: I.mono, color: lccNet <= 0 ? I.forest : I.ink, fontFeatureSettings: '"tnum"' }}>
+                  {lccNet <= 0 ? '+' : ''}{fmtKr(Math.abs(lccNet))}
+                </span>
+              </div>
+            )}
+            {lcoe != null && (
+              <div style={{
+                marginTop: 10, padding: '10px 14px',
+                background: I.accentWash, borderLeft: `3px solid ${I.accent}`,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                <span style={{ fontSize: 11, color: I.ink2 }}>Kostnad per levererad kWh<br/>
+                  <span style={{ fontSize: 9.5, color: I.mute }}>investering utslagen över {lccYears} år · exkl. moms</span></span>
+                <span style={{ fontFamily: I.serif, fontSize: 24, fontWeight: 500, color: I.accent, letterSpacing: -0.5 }}>
+                  {C.fmt(lcoe, { digits: 2 })} <span style={{ fontSize: 13, fontFamily: I.mono }}>kr/kWh</span>
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>

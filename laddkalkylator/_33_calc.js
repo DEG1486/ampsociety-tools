@@ -160,6 +160,10 @@
     return hours.map((h) => Math.max(0, Math.min(1, h * scale)));
   }
 
+  // Livscykelkostnadens horisont. 10 år är brukligt för laddinfrastruktur och
+  // ungefär den tekniska livslängd anläggningen dimensioneras för.
+  const LCC_YEARS = 10;
+
   // Default systemverkningsgrad (kabel- + hub-förluster). Bilens onboard-
   // charger AC→DC räknas separat och ingår normalt INTE i EVSE-sizing.
   const DEFAULT_EFFICIENCY = 0.95;
@@ -800,7 +804,35 @@
     // Payback på NETTOkapitalet (efter ev. investeringsstöd).
     const paybackMonths      = (monthlyNet > 0 && capitalCost > 0) ? netCapitalCost / monthlyNet : null;
     const paybackYears       = paybackMonths != null ? paybackMonths / 12 : null;
+
+    // --- Livscykelkostnad över LCC_YEARS år ------------------------------
+    // ODISKONTERAD, som paybacken. Att blanda en diskonterad LCC med en
+    // odiskonterad payback i samma ruta vore att presentera två tal som ser
+    // jämförbara ut men bygger på olika antaganden. Vill man ha nuvärde krävs
+    // en kalkylränta som säljaren kan försvara — ett medvetet bortval.
+    //
+    // Inga prisökningar heller: elpriset antas realt konstant. Ett påslag på
+    // säg 2 %/år skulle flytta tioårstalet ~10 %, men det är en gissning om
+    // elmarknaden som kalkylatorn inte har grund för.
+    const lccMonths = LCC_YEARS * 12;
+    const lccEnergyCost  = monthlyEnergyCost * lccMonths;
+    const lccPowerCost   = monthlyPowerCost * lccMonths;
+    const lccOmCost      = monthlyOmCost * lccMonths;
+    // Investeringen räknas NETTO (efter stöd) — det är den faktiska utgiften.
+    const lccTotal       = netCapitalCost + lccEnergyCost + lccPowerCost + lccOmCost;
+    const lccRevenue     = monthlyRevenue * lccMonths;
+    const lccNet         = lccTotal - lccRevenue;
+    const lccEnergyKWh   = monthlyEnergyKWh * lccMonths;
+    // LCoE = vad varje LEVERERAD kWh kostar när investeringen slås ut över
+    // perioden. Det är talet som går att hålla mot ett laddoperatörsavtal
+    // eller mot att inte bygga alls. Intäkter räknas INTE av — LCoE är en
+    // kostnad per kWh, inte ett netto.
+    const lcoe = lccEnergyKWh > 0 ? lccTotal / lccEnergyKWh : null;
+
     return {
+      lccYears: LCC_YEARS,
+      lccEnergyCost, lccPowerCost, lccOmCost, lccTotal, lccRevenue, lccNet,
+      lccEnergyKWh, lcoe,
       capitalCost, investmentGrant: grant, netCapitalCost,
       materialCost: material, installationCost: installation,
       // Priserna ekas tillbaka så att PDF:en kan redovisa vad paybacken bygger på.
@@ -832,7 +864,7 @@
   }
 
   window.Amp5Calc = {
-    CAP_PER_HUB_KW, OUTLETS_PER_HUB, MAX_SESSIONS_PER_HUB, HW_LIMIT_KW,
+    CAP_PER_HUB_KW, OUTLETS_PER_HUB, MAX_SESSIONS_PER_HUB, HW_LIMIT_KW, LCC_YEARS,
     OUTLET_HW_LIMIT_KW, CAR_AC_LIMIT_KW,
     DEFAULT_EFFICIENCY, ONBOARD_EFFICIENCY,
     LIMIT_REASON, LIMIT_REASON_LABEL, SCENARIO_PALETTE,
