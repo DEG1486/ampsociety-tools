@@ -546,7 +546,8 @@ function InstrumentVariant() {
   // hook som läser en senare variabel får undefined i deps.
   const gridAssessment = React.useMemo(() => C.computeGridAssessment({
     fuseSizeA, existingLoadPct, systemPeakKW: chartEnergy.peakPowerKW,
-  }), [fuseSizeA, existingLoadPct, chartEnergy.peakPowerKW]);
+    capPerHub, installedHubs: chartEnergy.hubs,
+  }), [fuseSizeA, existingLoadPct, chartEnergy.peakPowerKW, capPerHub, chartEnergy.hubs]);
 
   // Effekt per LADDANDE bil vid samtidig topp kommer nu ur kohortsimuleringen i
   // båda lägena. Tidigare räknade hubs-läget effekttak / antal närvarande, vilket
@@ -920,7 +921,7 @@ function NumberField({
   };
 
   if (compact) {
-    return (
+    const rad = (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 11, color: I.ink2, flex: 1 }}>
           {label}{optional && <span style={{ color: I.mute, fontSize: 10, marginLeft: 4 }}>·</span>}
@@ -933,6 +934,16 @@ function NumberField({
             padding: '4px 6px', fontFamily: I.mono, fontSize: 12,
             color: I.ink, borderRadius: 2, textAlign: 'right', outline: 'none',
           }} />
+      </div>
+    );
+    // Compact-varianten tog emot hint men renderade den aldrig — en varning som
+    // skickades hit försvann tyst. Raden läggs till bara när det finns något att
+    // visa, så den vanliga layouten är oförändrad.
+    if (!hint) return rad;
+    return (
+      <div>
+        {rad}
+        <div style={{ fontSize: 10, lineHeight: 1.4, color: I.accent, textAlign: 'right', marginTop: 2 }}>{hint}</div>
       </div>
     );
   }
@@ -1689,8 +1700,14 @@ function ScenarioCard({ color, scenario, energy, rangeKm, canRemove, onChange, o
 
       <NumberField compact label="Uttag" value={s.outlets}
         onChange={(v) => onChange({ outlets: v })} min={1} max={500} />
+      {/* Samma 54-uttag/hub-kontroll som huvudpanelen har. Den saknades här, så
+          ett scenario kunde sättas till färre hubbar än uttagen fysiskt kräver
+          och jämföras rakt av mot ett giltigt scenario. */}
       <NumberField compact label="SmartHubs" value={s.hubs} placeholder={`auto (${energy.autoHubs})`}
-        onChange={(v) => onChange({ hubs: v })} min={1} max={20} optional />
+        onChange={(v) => onChange({ hubs: v })} min={1} max={20} optional
+        hint={s.hubs != null && s.hubs * C.OUTLETS_PER_HUB < s.outlets
+          ? `⚠ kräver minst ${Math.ceil(s.outlets / C.OUTLETS_PER_HUB)} hubbar`
+          : null} />
       <NumberField compact label="Parkering (h)" value={s.parkingHours}
         onChange={(v) => onChange({ parkingHours: v })} min={1} max={24} />
       <NumberField compact label="kW/hub" value={s.capPerHub}
@@ -1838,6 +1855,7 @@ function RightPanel({ mode, energy, sizing, chartEnergy, heroKWh, heroRange, pro
           profile={profile}
           carAcLimit={carAcLimit} efficiency={efficiency}
           sessionNeedKWh={sessionNeedKWh} strategy={strategy}
+          gridAssessment={gridAssessment}
         />
       </div>
 
@@ -2137,11 +2155,19 @@ function StatList({ mode, energy, sizing, chartEnergy }) {
   );
 }
 
-function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerHub, systemCap, occPct, peakOcc, desiredKWh, profile, carAcLimit, efficiency, sessionNeedKWh, strategy }) {
+function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerHub, systemCap, occPct, peakOcc, desiredKWh, profile, carAcLimit, efficiency, sessionNeedKWh, strategy, gridAssessment }) {
   const C = window.Amp5Calc;
   const width = 640, height = 200, pad = { l: 48, r: 16, t: 16, b: 40 };
   const innerW = width - pad.l - pad.r;
   const innerH = height - pad.t - pad.b;
+
+  // Hur många hubbar servisen rymmer utöver de installerade (null = okänt).
+  const hubPlats = gridAssessment && Number.isFinite(gridAssessment.hubsHeadroom)
+    ? gridAssessment.hubsHeadroom : null;
+  const elnatRad = hubPlats == null ? null
+    : hubPlats > 0
+      ? <> Elnätet rymmer <strong>{hubPlats} hub{hubPlats > 1 ? 'bar' : ''} till</strong> inom nuvarande servis.</>
+      : <> Men <strong>nuvarande servis rymmer inga fler hubbar</strong> — en till kräver servisutökning.</>;
 
   const { points, xLabel, yLabel, highlightX, xTicks, kneeX, kneeNeedBound, powerLimited, needLimited } = React.useMemo(() => {
     if (mode === 'energy') {
@@ -2283,6 +2309,11 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
         <text x={pad.l} y={height - 4} fontFamily={I.mono} fontSize={10} fill={I.mute}>{xLabel}</text>
         <text x={width - pad.r} y={pad.t - 4} textAnchor="end" fontFamily={I.mono} fontSize={10} fill={I.mute}>{yLabel}</text>
       </svg>
+      {/* Rådet "fler SmartHubs" är värdelöst om servisen inte rymmer en till.
+          Elnätspanelen visste det redan, men de två rutorna pratade inte med
+          varandra: 125 A med 20 % grundlast ger 69 kW tillgängligt, vilket
+          rymmer EN hub på 44 kW — och ändå stod rådet där. Nu säger rutan
+          antingen hur många som får plats eller att servisen måste utökas. */}
       {mode === 'energy' && (
         <div style={{
           marginTop: 12, padding: '10px 12px', borderRadius: 2,
@@ -2294,7 +2325,7 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
             ? <>✓ <strong>Behovet uppfylls.</strong> Bilarna når sitt energibehov ({C.fmt(sessionNeedKWh, { digits: 0 })} kWh) under parkeringen — mer effekt eller längre tid ger inte mer energi, bara snabbare laddning.</>
             : powerLimited
             ? (kneeX != null && !kneeNeedBound
-                ? <>⚡ <strong>Effektbegränsat.</strong> Hubbarna går maxade nästan hela dygnet. Bortom ~{kneeX} h parkering ger längre tid knappt mer energi per bil. Vill ni leverera mer: <strong>fler SmartHubs eller högre effekt</strong>, inte längre parkeringstid.</>
+                ? <>⚡ <strong>Effektbegränsat.</strong> Hubbarna går maxade nästan hela dygnet. Bortom ~{kneeX} h parkering ger längre tid knappt mer energi per bil. Vill ni leverera mer: <strong>fler SmartHubs eller högre effekt</strong>, inte längre parkeringstid.{elnatRad}</>
                 // Den här grenen gäller den LINJÄRA kurvan (jämn profil, inget knä).
                 // Texten sa tidigare "hubbarna räcker inte för antalet platser",
                 // vilket pekade ut fel flaskhals: en hub tar 54 uttag och 30
@@ -2305,7 +2336,7 @@ function SensitivityChart({ mode, energy, sizing, parkingHours, outlets, capPerH
                 // bara för att färre sessioner delar på samma energi. Utan den
                 // meningen läser man kurvan som att längre parkeringstid löser
                 // underdimensioneringen.
-                : <>⚡ <strong>Effektbegränsat.</strong> Hubbarnas effekt räcker inte för alla bilar samtidigt — de som ryms får full startström, resten köar tills kapacitet frigörs. Anläggningen går redan på sitt tak dygnet runt, så kurvan stiger bara för att färre bilar delar på samma energi: <strong>mer per bil, men färre laddade bilar</strong>. Vill ni höja totalen: <strong>fler SmartHubs eller högre effekt</strong>.</>)
+                : <>⚡ <strong>Effektbegränsat.</strong> Hubbarnas effekt räcker inte för alla bilar samtidigt — de som ryms får full startström, resten köar tills kapacitet frigörs. Anläggningen går redan på sitt tak dygnet runt, så kurvan stiger bara för att färre bilar delar på samma energi: <strong>mer per bil, men färre laddade bilar</strong>. Vill ni höja totalen: <strong>fler SmartHubs eller högre effekt</strong>.{elnatRad}</>)
             : <>🕓 <strong>Tidsbegränsat.</strong> Systemet har effektmarginal, så <strong>längre parkeringstid ger i huvudsak mer energi</strong> per bil{kneeNeedBound && kneeX != null ? <> — upp till behovet ({C.fmt(sessionNeedKWh, { digits: 0 })} kWh) som nås vid ~{kneeX} h</> : null}.</>}
         </div>
       )}

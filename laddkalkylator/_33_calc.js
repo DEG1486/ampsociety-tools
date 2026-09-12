@@ -617,18 +617,34 @@
 
     const headroomKWh = Math.max(0, actualEnergy - targetEnergy);
     const shortfallKWh = Math.max(0, targetEnergy - actualEnergy);
-    // activeOutlets > 0: vid noll beläggning levereras 0 kWh — då är målet inte "nått".
     const capacityAchieves = activeOutlets > 0 && effectiveCap >= powerNeeded - 1e-6;
-    const achievesTarget = capacityAchieves && hwFeasible;
+    // Med noll beläggning eller noll mål finns ingen last att möta. Då är
+    // "målet uppnås inte" en falsk varning — användaren har själv satt
+    // beläggningen till noll, och det finns inget mål att missa.
+    //
+    // Det var dessutom det ENDA sättet att nå HW_CONFIG: i 9 000 testfall med
+    // mål > 0 och beläggning > 0 utlöstes den aldrig, men i degenererade fall
+    // utlöstes den alltid. Varningen sa alltså bara något när den inte borde
+    // säga något, och texten ("Målet uppnås inte med vald tid och beläggning")
+    // pekade ut tid och beläggning som problem när användaren bara råkat
+    // nollställa ett fält.
+    const harLast = targetEnergy > 0 && activeOutlets > 0;
+    const achievesTarget = harLast ? (capacityAchieves && hwFeasible) : true;
 
     // Alla bindande orsaker rapporteras, inte bara den första. Tidigare testades
     // bilens tak först och kedjan stannade där, vilket gömde fastighetstaket i
     // 42 % av de misslyckade fallen och gav rådet "längre parkeringstid" när det
     // i själva verket var servisen som tog stopp (granskningsfynd G11).
+    // !achievesTarget implicerar harLast (se ovan), så ingen extra spärr behövs.
     const limitReasons = [];
     if (!achievesTarget) {
       if (systemCap != null && systemCap < powerNeeded - 1e-6) limitReasons.push(LIMIT_REASON.SYSTEM_CAP);
       if (!hwFeasible) limitReasons.push(LIMIT_REASON.HW);
+      // Skyddsnät: fångar en bindande orsak som inte är någon av de två ovan.
+      // Med nuvarande modell ska den inte kunna nås (hubs dimensioneras efter
+      // powerNeeded, så installedCap räcker alltid när systemCap inte binder) —
+      // men den lämnas kvar hellre än att limitReason blir null medan
+      // achievesTarget är false. Utlöses den är det ett modellfel att gräva i.
       if (!limitReasons.length) limitReasons.push(LIMIT_REASON.HW_CONFIG);
     }
     // limitReason = den mest åtgärdbara orsaken. Fastighetstaket går att bygga
@@ -672,7 +688,10 @@
   //   fuseSizeA       — servissäkring (A)
   //   existingLoadPct — andel av serviseffekten som redan belastar nätet (0..1)
   //   systemPeakKW    — SmartHub-systemets toppeffekt (peakPowerKW el. effectiveCap)
-  function computeGridAssessment({ fuseSizeA, existingLoadPct, systemPeakKW }) {
+  //   capPerHub, installedHubs (optional) — används för att räkna ut hur många
+  //     SmartHubs den TILLGÄNGLIGA effekten rymmer. Utan det kan UI:t råda
+  //     "fler SmartHubs" i ett läge där elnätet inte tar en enda till.
+  function computeGridAssessment({ fuseSizeA, existingLoadPct, systemPeakKW, capPerHub, installedHubs }) {
     const fuse = Math.max(1, fuseSizeA != null ? fuseSizeA : 0);
     // P = √3 × 400 V × I
     const servisKW = (Math.sqrt(3) * 400 * fuse) / 1000;
@@ -720,9 +739,21 @@
         upgradeCostHigh = Math.ceil((1500000 + over300 * 6000) / 10000) * 10000;
       }
     }
+    // Hur många SmartHubs ryms i den effekt som faktiskt är TILLGÄNGLIG, dvs
+    // efter avdrag för fastighetens befintliga last? Rådet "fler SmartHubs" var
+    // tidigare omöjligt att följa i just de fall det gavs: 125 A servis med
+    // 20 % grundlast ger 69 kW tillgängligt, vilket rymmer EN hub på 44 kW —
+    // inte två. Utan det här talet fick säljaren räkna ut det själv, och
+    // elnätspanelen och effektvarningen kunde säga emot varandra.
+    const hubKW = Number.isFinite(capPerHub) && capPerHub > 0 ? capPerHub : CAP_PER_HUB_KW;
+    const hubsWithinAvailable = Math.max(0, Math.floor(availableKW / hubKW));
+    const hubsHeadroom = Number.isFinite(installedHubs)
+      ? Math.max(0, hubsWithinAvailable - installedHubs)
+      : null;
     return {
       servisKW, existingKW, availableKW, surplusKW, coverageRatio, marginRatio,
       status, extraNeeded, upgradeCostLow, upgradeCostHigh,
+      hubsWithinAvailable, hubsHeadroom,
     };
   }
 
