@@ -106,30 +106,38 @@
     },
   };
 
-  // Bilmodeller — WLTP kombinerad (kWh/100 km).
+  // Bilmodeller — WLTP kombinerad (kwh100, kWh/100 km) och ANVÄNDBAR
+  // batterikapacitet (battery, kWh).
+  //
+  // batteriet används inte i beräkningen — det är ett rimlighetstak för
+  // presentationen. Utan energibehov per bil laddar modellen så länge bilen
+  // står, och med lång parkeringstid och låg beläggning gav det sessioner på
+  // 148 kWh och "922 km räckvidd" för en bil som går 600 km på fullt batteri.
+  // Modellen har rätt om ANLÄGGNINGEN (44 kW dygnet runt stämmer); det är
+  // påståendet om bilen som blir omöjligt.
   const CARS = [
     // Volvo
-    { id: 'ex30',       name: 'Volvo EX30',            kwh100: 16.0 },
-    { id: 'xc40',       name: 'Volvo EX40',            kwh100: 19.3 },
+    { id: 'ex30',       name: 'Volvo EX30',            kwh100: 16.0, battery: 64 },
+    { id: 'xc40',       name: 'Volvo EX40',            kwh100: 19.3, battery: 75 },
     // Tesla
-    { id: 'tesla3',     name: 'Tesla Model 3 LR',      kwh100: 14.5 },
-    { id: 'tesla3rwd',  name: 'Tesla Model 3 RWD',     kwh100: 13.5 },
-    { id: 'teslamy',    name: 'Tesla Model Y RWD',      kwh100: 15.8 },
+    { id: 'tesla3',     name: 'Tesla Model 3 LR',      kwh100: 14.5, battery: 75 },
+    { id: 'tesla3rwd',  name: 'Tesla Model 3 RWD',     kwh100: 13.5, battery: 57 },
+    { id: 'teslamy',    name: 'Tesla Model Y RWD',      kwh100: 15.8, battery: 57 },
     // VW/Škoda/Cupra
-    { id: 'id4',        name: 'VW ID.4 Pro',           kwh100: 17.5 },
-    { id: 'id7',        name: 'VW ID.7 Pro',           kwh100: 16.2 },
-    { id: 'enyaq',      name: 'Škoda Enyaq 60',        kwh100: 15.9 },
-    { id: 'born',       name: 'Cupra Born',            kwh100: 16.0 },
+    { id: 'id4',        name: 'VW ID.4 Pro',           kwh100: 17.5, battery: 77 },
+    { id: 'id7',        name: 'VW ID.7 Pro',           kwh100: 16.2, battery: 77 },
+    { id: 'enyaq',      name: 'Škoda Enyaq 60',        kwh100: 15.9, battery: 58 },
+    { id: 'born',       name: 'Cupra Born',            kwh100: 16.0, battery: 58 },
     // Hyundai/Kia
-    { id: 'ioniq5',     name: 'Hyundai Ioniq 5 RWD',  kwh100: 17.5 },
-    { id: 'kona',       name: 'Hyundai Kona EV',       kwh100: 15.0 },
-    { id: 'kiaev3',     name: 'Kia EV3 Long Range',    kwh100: 15.5 },
-    { id: 'kiaev6',     name: 'Kia EV6 RWD',          kwh100: 17.2 },
+    { id: 'ioniq5',     name: 'Hyundai Ioniq 5 RWD',  kwh100: 17.5, battery: 77 },
+    { id: 'kona',       name: 'Hyundai Kona EV',       kwh100: 15.0, battery: 65 },
+    { id: 'kiaev3',     name: 'Kia EV3 Long Range',    kwh100: 15.5, battery: 81 },
+    { id: 'kiaev6',     name: 'Kia EV6 RWD',          kwh100: 17.2, battery: 77 },
     // Polestar/BMW/MG/Ford
-    { id: 'polestar2',  name: 'Polestar 2 SM',         kwh100: 17.1 },
-    { id: 'bmwix1',     name: 'BMW iX1 eDrive20',      kwh100: 16.1 },
-    { id: 'mg4',        name: 'MG4 Extended Range',    kwh100: 16.5 },
-    { id: 'mache',      name: 'Ford Mustang Mach-E',   kwh100: 19.0 },
+    { id: 'polestar2',  name: 'Polestar 2 SM',         kwh100: 17.1, battery: 69 },
+    { id: 'bmwix1',     name: 'BMW iX1 eDrive20',      kwh100: 16.1, battery: 66 },
+    { id: 'mg4',        name: 'MG4 Extended Range',    kwh100: 16.5, battery: 77 },
+    { id: 'mache',      name: 'Ford Mustang Mach-E',   kwh100: 19.0, battery: 75 },
   ];
 
   const sum = (arr) => arr.reduce((a, b) => a + b, 0);

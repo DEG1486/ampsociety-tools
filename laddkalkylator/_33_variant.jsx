@@ -2002,6 +2002,10 @@ function Hero({ mode, kWh, rangeKm, car, carId, setCarId, energy, sizing, peakOc
       ).join(' '))
     : null;
 
+  // Överstiger energin per laddtillfälle den valda bilens batteri? Gäller båda
+  // lägena — hubs-läget visar deliveredEnergyPerOutlet i samma ruta.
+  const batteriTak = (car && car.battery > 0 && kWh > car.battery) ? car.battery : null;
+
   return (
     <div className="iv-hero" style={{
       display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 40,
@@ -2062,6 +2066,24 @@ function Hero({ mode, kWh, rangeKm, car, carId, setCarId, energy, sizing, peakOc
           }}>
           {C.CARS.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.kwh100} kWh/100km</option>)}
         </select>
+        {/* Rimlighetstak. Utan angivet energibehov laddar modellen så länge
+            bilen står — korrekt om ANLÄGGNINGEN (hubbarna går verkligen på sitt
+            tak), men påståendet om BILEN blir omöjligt: 148 kWh per session och
+            922 km räckvidd för en bil som går 600 km på fullt batteri.
+            Beräkningen rörs inte; talet flaggas bara som ogenomförbart, och
+            åtgärden (ange ett energibehov) står i rutan. */}
+        {batteriTak != null && (
+          <div style={{
+            marginTop: 12, padding: '9px 11px', borderRadius: 2,
+            background: I.accentWash, borderLeft: `3px solid ${I.accent}`,
+            fontSize: 10.5, lineHeight: 1.45, color: I.ink2,
+          }}>
+            ⚠ <strong>Mer än bilen rymmer.</strong> {C.fmt(kWh, { digits: 0 })} kWh per laddtillfälle
+            överstiger {car.name}s batteri på {car.battery} kWh — anläggningen kan leverera det,
+            men bilen kan inte ta emot det. Ange <strong>energibehov per bil</strong> för ett
+            realistiskt tal.
+          </div>
+        )}
       </div>
     </div>
   );
