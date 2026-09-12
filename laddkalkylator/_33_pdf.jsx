@@ -334,6 +334,23 @@ function pdfWarnings(data) {
         + `Bilarna når inte sitt energibehov under parkeringen.`);
     }
   }
+  // Energi per laddtillfälle över bilens batteri. Utan angivet energibehov
+  // laddar modellen så länge bilen står, vilket vid lång parkeringstid och låg
+  // beläggning gav 148 kWh per session och "922 km" i den här rapporten — för
+  // en bil som går 600 km på fullt batteri. Modellen har rätt om anläggningen;
+  // det är påståendet om bilen som blir omöjligt. Skärmen flaggar det sedan
+  // tidigare, men utan den här raden kunde talet ändå exporteras till kund.
+  const perSession = data.mode === 'hubs'
+    ? (data.outputs && data.outputs.deliveredEnergyPerOutlet)
+    : (data.outputs && data.outputs.perOutletKWh);
+  const batteri = data.inputs && data.inputs.carBattery;
+  if (perSession > 0 && batteri > 0 && perSession > batteri) {
+    warns.push(`Energin per laddtillfälle (${Amp.fmt(perSession, { digits: 0 })} kWh) överstiger `
+      + `${data.inputs.carName}s batteri på ${Amp.fmt(batteri, { digits: 0 })} kWh. `
+      + `Anläggningen kan leverera det, men bilen kan inte ta emot det — `
+      + `räckvidden ovan förutsätter att bilen rymmer hela mängden. `
+      + `Ange ett energibehov per bil för ett realistiskt tal.`);
+  }
   return warns;
 }
 
@@ -705,7 +722,22 @@ function PDFTechnical({ data }) {
             {[
               { label: 'Installerad effekt', v: `${Math.round(data.outputs.installedCap)}`, u: 'kW' },
               { label: 'Verklig kapacitet', v: `${Math.round(data.outputs.effectiveCap)}`, u: 'kW' },
-              { label: 'Snitt per plats', v: `${(data.outputs.avgPowerPerOutlet != null ? data.outputs.avgPowerPerOutlet : (data.outputs.effectiveCap / data.inputs.outlets)).toFixed(1)}`, u: 'kW' },
+              // OBS: PDFTechnical RENDERAS ALDRIG (se filhuvudet — den exponeras
+              // inte på window, och exportAsPdf väljer PDFEditorial/PDFCompare).
+              // Rättat ändå, men inget här når en kund.
+              //
+              // Hette "Snitt per plats", men talet är medeleffekt per BELAGD
+              // plats (grid-kWh / belagda platstimmar). Skillnaden är 2,4–5,6×
+              // beroende på beläggning — vid 18 % beläggning 9,78 kW under en
+              // etikett som påstod 1,76. Skärmen döptes om i v3.8.3.
+              //
+              // Den gamla fallbacken (effectiveCap / outlets) var en TREDJE
+              // storhet — kapacitetstaket per uttag — och hade gett ett tal som
+              // varken stämde med etiketten eller med skärmen. Saknas värdet
+              // skrivs hellre ingenting.
+              { label: 'Medeleffekt / belagd plats',
+                v: data.outputs.avgPowerPerOutlet != null ? data.outputs.avgPowerPerOutlet.toFixed(1) : '–',
+                u: 'kW' },
               { label: 'Aktiva uttag (snitt)', v: `${Math.round(data.outputs.activeOutlets)}`, u: 'st' },
             ].map((m, i) => (
               <div key={i} style={{ padding: '16px 14px', borderRight: i < 3 ? `1px solid ${BRAND.lineSoft}` : 'none' }}>
