@@ -46,7 +46,6 @@ $newManifestJson = $manifest | ConvertTo-Json -Depth 10 -Compress
 $newManifest     = '<script type="__bundler/manifest">' + $newManifestJson + '</script>'
 $html = [regex]::Replace($html, $manifestPattern, $newManifest)
 
-$html = $html -replace 'Amp5 Laddkalkylator v[\d.]+', 'Amp5 Laddkalkylator v3.7'
 
 [System.IO.File]::WriteAllText($outHtml, $html, [System.Text.Encoding]::UTF8)
 

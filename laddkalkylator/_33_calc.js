@@ -233,27 +233,54 @@
       && inp.profileHours.every((v) => Number.isFinite(v)))
       ? inp.profileHours
       : new Array(24).fill(0.5);
-    const skift = (parkingInt - 1) / 2;
-    const skiftHel = Math.floor(skift);
-    const skiftDel = skift - skiftHel;
-    const arrivals = profile.map((p, t) => {
-      const a = profile[(t + skiftHel) % 24];
-      const b = profile[(t + skiftHel + 1) % 24];
-      return (a * (1 - skiftDel) + b * skiftDel) / parkingInt;
-    });
-    const aSum = sum(arrivals);
-    const normArrivals = aSum > 1e-9
-      ? arrivals.map((a) => a / aSum)
-      : profile.map((p) => p / (sum(profile) || 1));
+    // Rutnätet är HALVTIMMAR, inte timmar. På ett timrutnät har parkerings-
+    // fönstret heltalsbredd och centreringsskiftet (L-1)/2 blir halvtal för
+    // jämna L. Kärnan får då stöd L för udda L men L+1 för jämna — en
+    // paritetsväxling som inte gör något utskrivet tal fel, men som får
+    // känslighetskurvans LUTNING att såga mellan granntimmar. Det är inte ett
+    // implementationsfel: rect-faltning PÅ ett timrutnät är sådan. Botemedlet
+    // är en finare diskretisering. På halvtimmesrutnätet är fönstret 2L steg
+    // och skiftet L steg — heltal för alla L, samma kärnform oavsett paritet.
+    //
+    // Hela kohortsimuleringen nedan går på samma rutnät. Att lägga bara
+    // närvarokurvan på halvtimmar men låta simuleringen ligga kvar på timmar
+    // gav 5-8 % skillnad mellan den redovisade beläggningen och den som
+    // faktiskt simulerades — modellen hade då motsagt sig själv.
+    const STEG = 48;                  // halvtimmessteg per dygn
+    const parkSteg = parkingInt * 2;  // parkeringsfönstret i halvtimmessteg
+    const profil48 = new Array(STEG);
+    for (let s = 0; s < STEG; s++) profil48[s] = profile[Math.floor(s / 2)];
+    // Skiftet är parkingInt HALVTIMMESSTEG (= L/2 timmar) — heltal för alla L.
+    // Fönstrets mittpunkt ligger på parkSteg/2 - 0,5 steg, så närvaron blir en
+    // kvarts timme sen i förhållande till profilen. Den biasen är KONSTANT i L
+    // (till skillnad från den gamla paritetsväxlingen), ligger under utdatans
+    // timupplösning, och delas av kohortsimuleringen nedan — som faltar samma
+    // ankomster med samma fönster. Intern konsistens väger tyngre än en
+    // kvartstimmes absolut fas: en exakt centrerad kärna hade krävt halva
+    // vikter i fönstrets ändar, vilket simuleringen inte kan representera
+    // (en bil har en session eller ingen).
+    const arrivals48 = new Array(STEG);
+    for (let s = 0; s < STEG; s++) {
+      arrivals48[s] = profil48[(s + parkingInt) % STEG] / parkSteg;
+    }
+    const a48Sum = sum(arrivals48);
+    const normArrivals = a48Sum > 1e-9
+      ? arrivals48.map((a) => a / a48Sum)
+      : profil48.map((p) => p / (sum(profil48) || 1));
 
-    // Närvaro = ankomst faltad med parkeringsfönster (rect, längd parkingInt).
-    const presence = new Array(24).fill(0);
-    for (let t = 0; t < 24; t++) {
-      const a = normArrivals[t];
+    // Närvaro = ankomst faltad med parkeringsfönstret (rect, parkSteg steg).
+    const presence48 = new Array(STEG).fill(0);
+    for (let s = 0; s < STEG; s++) {
+      const a = normArrivals[s];
       if (a === 0) continue;
-      for (let dh = 0; dh < parkingInt; dh++) {
-        presence[(t + dh) % 24] += a;
+      for (let ds = 0; ds < parkSteg; ds++) {
+        presence48[(s + ds) % STEG] += a;
       }
+    }
+    // Timkurva för UI och PDF: medelvärdet av halvtimmesparen.
+    const presence = new Array(24);
+    for (let t = 0; t < 24; t++) {
+      presence[t] = (presence48[2 * t] + presence48[2 * t + 1]) / 2;
     }
     // Reglaget anger profilens TOPP. Målet för den faltade kurvan är därför det
     // medel som profilen vid den toppen implicerar — så att utsmetningen inte
@@ -288,7 +315,7 @@
     const needDelivered = (inp.sessionNeedKWh != null && inp.sessionNeedKWh > 0)
       ? inp.sessionNeedKWh : null;
     const needGrid = needDelivered != null ? needDelivered / efficiency : Infinity;
-    const cohortCars = normArrivals.map((a) => a * totalSessionsPerDay); // ankommande bilar per timme
+    const cohortCars = normArrivals.map((a) => a * totalSessionsPerDay); // ankommande bilar per halvtimmessteg
 
     // Spec-gränser per hub (handbok 3.1, 8.3.1): antal samtidiga sessioner och
     // 6 A-golvet. Bilar utöver sessionstaket får ingen session alls.
@@ -303,33 +330,35 @@
     const maxChargingSlots = Math.floor(effectiveCap / minChargeKW);
 
     // Antal uppvärmningsdygn innan avläsning. Söks adaptivt: kör ett dygn i
-    // taget och sluta när två dygn i rad ger identisk timkurva.
+    // taget och sluta när två dygn i rad ger identisk kurva.
+    // Rutnätet är halvtimmar (STEG steg per dygn) — se ankomstmodellen ovan.
     const MAX_DAYS = 40;
+    const DT = 24 / STEG; // steglängd i timmar (0,5)
     const simulate = (cap, slotCap) => {
-      const H = MAX_DAYS * 24;
-      const power = new Array(24).fill(0);        // kW per timme (stationärt dygn)
-      const sessionKWh = new Array(24).fill(0);   // grid-kWh per bil, per ankomsttimme
-      const chargingCars = new Array(24).fill(0); // antal bilar som FÅR ström
-      const presentCars = new Array(24).fill(0);  // antal bilar vid uttag
-      const wantingCars = new Array(24).fill(0);  // antal som ännu behöver energi
-      const perCarKW = new Array(24).fill(0);     // effekt per laddande bil
-      const remaining = new Array(H).fill(0);     // kvarvarande grid-behov per kohort
+      const H = MAX_DAYS * STEG;
+      const power = new Array(STEG).fill(0);        // kW per steg (stationärt dygn)
+      const sessionKWh = new Array(STEG).fill(0);   // grid-kWh per bil, per ankomststeg
+      const chargingCars = new Array(STEG).fill(0); // antal bilar som FÅR ström
+      const presentCars = new Array(STEG).fill(0);  // antal bilar vid uttag
+      const wantingCars = new Array(STEG).fill(0);  // antal som ännu behöver energi
+      const perCarKW = new Array(STEG).fill(0);     // effekt per laddande bil
+      const remaining = new Array(H).fill(0);       // kvarvarande grid-behov per kohort
       // Rullande dygnsbuffert för konvergenstestet.
-      let forra = null, denna = new Array(24).fill(0);
-      let rec0 = -1; // första timmen i det dygn som ska redovisas
+      let forra = null, denna = new Array(STEG).fill(0);
+      let rec0 = -1; // första steget i det dygn som ska redovisas
       for (let h = 0; h < H; h++) {
         remaining[h] = needGrid;
         let activeCars = 0, present = 0;
         const queue = [];
-        for (let s0 = Math.max(0, h - parkingInt + 1); s0 <= h; s0++) {
-          const n = cohortCars[s0 % 24];
+        for (let s0 = Math.max(0, h - parkSteg + 1); s0 <= h; s0++) {
+          const n = cohortCars[s0 % STEG];
           if (n <= 1e-12) continue;
           present += n;
           if (remaining[s0] <= 1e-9) continue; // står kvar men är färdigladdad
           queue.push(s0);
           activeCars += n;
         }
-        if (rec0 >= 0 && h >= rec0 && h < rec0 + 24) {
+        if (rec0 >= 0 && h >= rec0 && h < rec0 + STEG) {
           presentCars[h - rec0] = present;
           // Bilar som fortfarande behöver energi. Skiljer kö från färdigladdade
           // bilar som bara står kvar — utan den skillnaden räknades en uppfylld
@@ -337,10 +366,10 @@
           wantingCars[h - rec0] = activeCars;
         }
         // OBS: inga continue-satser harifran och ner. Dygnsgranskontrollen
-        // langst ned MASTE korás varje timme, aven nar ingen bil laddar —
+        // langst ned MASTE korás varje steg, aven nar ingen bil laddar —
         // annars hittas aldrig det stationara dygnet i anlaggningar som star
-        // stilla nattetid, och hela timkurvan blir noll.
-        let totalKW = 0, perCar = 0, charging = 0;
+        // stilla nattetid, och hela kurvan blir noll.
+        let stegKWh = 0, perCar = 0, charging = 0;
         if (queue.length > 0) {
         // Sessionstaket: ryms inte alla närvarande bilar som sessioner får
         // överskottet ingen laddpunkt alls. Modelleras som en andel av
@@ -358,54 +387,74 @@
         const alloc = allocatePower(cap, wanting, hwEff, startKW, minChargeKW, slotCap);
         perCar = alloc.perCar; charging = alloc.charging;
         if (charging > 0) {
-          // Andel av de köande bilarna som får ström den här timmen. Bilar som
+          // Andel av de köande bilarna som får ström det här steget. Bilar som
           // står i kö klättrar i prioritetsordningen (köbonus, 8.3.1.3), så över
           // dygnet roterar tilldelningen — därför fördelas medeleffekten här.
           const servedShare = perCar * (charging / wanting) * sessionFrac;
           for (const s0 of queue) {
-            const draw = Math.min(servedShare, remaining[s0]); // 1 h → kWh
+            const draw = Math.min(servedShare * DT, remaining[s0]); // kW × h → kWh
             remaining[s0] -= draw;
-            totalKW += draw * cohortCars[s0 % 24];
-            if (rec0 >= 0 && s0 >= rec0 && s0 < rec0 + 24) sessionKWh[s0 - rec0] += draw;
+            stegKWh += draw * cohortCars[s0 % STEG];
+            if (rec0 >= 0 && s0 >= rec0 && s0 < rec0 + STEG) sessionKWh[s0 - rec0] += draw;
           }
         }
         }
-        if (rec0 >= 0 && h >= rec0 && h < rec0 + 24) {
-          power[h - rec0] = totalKW;
+        if (rec0 >= 0 && h >= rec0 && h < rec0 + STEG) {
+          power[h - rec0] = stegKWh / DT; // kWh per steg → kW
           chargingCars[h - rec0] = charging;
           perCarKW[h - rec0] = perCar;
         }
         // Allt efter avläsningsdygnets sista kohort är bortkastat arbete.
-        if (rec0 >= 0 && h >= rec0 + 23 + parkingInt) break;
-        denna[h % 24] = totalKW;
+        if (rec0 >= 0 && h >= rec0 + (STEG - 1) + parkSteg) break;
+        denna[h % STEG] = stegKWh;
         // Vid varje dygnsslut: är dygnet identiskt med föregående är systemet
         // stationärt. Då lämnas ett helt extra dygn för avläsning, så att
         // kohorter som startar i avläsningsdygnet hinner ladda klart.
-        if (h % 24 === 23 && rec0 < 0) {
+        if (h % STEG === STEG - 1 && rec0 < 0) {
           if (forra) {
             let diff = 0;
-            for (let t = 0; t < 24; t++) diff = Math.max(diff, Math.abs(denna[t] - forra[t]));
-            // Sista kohorten i avläsningsdygnet (s0 = rec0+23) måste hinna ladda
-            // hela sitt fönster: rec0 + 23 + parkingInt <= H - 1. Det gamla
-            // villkoret pekade åt fel håll och trunkerade i stället för att rädda.
-            if (diff < 1e-9 || h + 1 + 24 + 24 + parkingInt > H) rec0 = h + 1;
+            for (let t = 0; t < STEG; t++) diff = Math.max(diff, Math.abs(denna[t] - forra[t]));
+            // Sista kohorten i avläsningsdygnet (s0 = rec0+STEG-1) måste hinna
+            // ladda hela sitt fönster: rec0 + STEG-1 + parkSteg <= H - 1. Det
+            // gamla villkoret pekade åt fel håll och trunkerade i stället för
+            // att rädda.
+            if (diff < 1e-9 || h + 1 + STEG + STEG + parkSteg > H) rec0 = h + 1;
           }
           forra = denna;
-          denna = new Array(24).fill(0);
+          denna = new Array(STEG).fill(0);
         }
       }
       return { power, sessionKWh, chargingCars, presentCars, wantingCars, perCarKW };
     };
 
+    // Halvtimmesserier → timserier för UI, PDF och all logik nedan. Effekt och
+    // antal bilar är medelvärdesstorheter, så medelvärdet av paret är rätt
+    // nedsampling; energin bevaras (sum(kW per timme) × 1 h = sum(kW per
+    // halvtimme) × 0,5 h). sessionKWh nedsamplas INTE — den är indexerad på
+    // ankomststeg och viktas mot normArrivals i samma upplösning.
+    const tillTimmar = (v) => {
+      const ut = new Array(24);
+      for (let t = 0; t < 24; t++) ut[t] = (v[2 * t] + v[2 * t + 1]) / 2;
+      return ut;
+    };
+
     // Okontrollerad efterfrågan = samma simulering utan effekttak (bilarna
     // slutar ändå vid mött behov). SmartHub-levererat = capat av effectiveCap.
-    const sim = simulate(effectiveCap, maxChargingSlots);
+    const sim48 = simulate(effectiveCap, maxChargingSlots);
+    const sim = {
+      power: tillTimmar(sim48.power),
+      chargingCars: tillTimmar(sim48.chargingCars),
+      presentCars: tillTimmar(sim48.presentCars),
+      wantingCars: tillTimmar(sim48.wantingCars),
+      perCarKW: tillTimmar(sim48.perCarKW),
+      sessionKWh: sim48.sessionKWh, // stannar i halvtimmesupplösning (se ovan)
+    };
     const hourlyPower = sim.power;
     // Baslinjen "okontrollerad efterfrågan" = SAMMA Amp5-hårdvara utan
     // lastbalansering. Effekttak och platstak släpps, men sessionstaket och
     // ChargePodens delade skydd är fysiska gränser som finns kvar oavsett
     // styrning — de ligger därför medvetet kvar i loopkroppen.
-    const hourlyDemand = simulate(Infinity, Infinity).power;
+    const hourlyDemand = tillTimmar(simulate(Infinity, Infinity).power);
 
     const totalEnergyFromGrid = sum(hourlyPower);
     const totalEnergyDay = totalEnergyFromGrid * efficiency;
@@ -446,8 +495,8 @@
     // Per-bil-energi efter η: ankomstviktat snitt av kohorternas sessionsenergi.
     // Simuleringen sker i grid-units, η appliceras vid output.
     let perOutletKWhRaw = 0;
-    for (let t0 = 0; t0 < 24; t0++) {
-      perOutletKWhRaw += normArrivals[t0] * sim.sessionKWh[t0];
+    for (let s0 = 0; s0 < STEG; s0++) {
+      perOutletKWhRaw += normArrivals[s0] * sim.sessionKWh[s0];
     }
     // Vid noll beläggning (sum(hours)=0) levereras ingen energi — håll per-session
     // konsistent med totalEnergyDay i stället för att visa hwLimit×parkingInt.

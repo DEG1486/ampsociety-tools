@@ -14,7 +14,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     projectName: projectName || '', // U2-fix: tom sträng = ej angivet; PDF visar ej default-strängen
     date: new Date().toLocaleDateString('sv-SE'),
     reportId,
-    version: '3.8.3',
+    version: '3.8.4',
   };
   const consts = {
     capPerHub, outletsPerHub: C.OUTLETS_PER_HUB,
@@ -126,7 +126,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       projectName: projectName || '', // U2-fix: tom sträng = ej angivet
       date: new Date().toLocaleDateString('sv-SE'),
       reportId,
-      version: '3.8.3',
+      version: '3.8.4',
     },
   };
 }
@@ -1468,8 +1468,9 @@ function Footer() {
   return (
     <div style={{ marginTop: 'auto', paddingTop: 20, borderTop: `1px solid ${I.line}`, fontSize: 10.5, color: I.mute, lineHeight: 1.65 }}>
       <div style={{ fontFamily: I.mono, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase', fontSize: 10 }}>Modell</div>
-      Antar WLTP-förbrukning. Ankomsterna rekonstrueras ur beläggningsprofilen
-      och faltas med parkeringstidsfönstret, skalat mot vald topp-beläggning.
+      Antar WLTP-förbrukning. Av bilarna som står på en plats en viss timme
+      antas en andel 1/parkeringstiden ha anlänt just då; ankomsterna faltas
+      med parkeringstidsfönstret, skalat mot vald topp-beläggning.
       Effekten fördelas som i Amp5:s lastbalansering: startström i
       prioritetsordning tills kapaciteten är slut, resten köar — inget fordon
       laddar under 6 A, och en SmartHub kör max 30 simultana sessioner.

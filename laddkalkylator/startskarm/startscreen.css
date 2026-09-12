@@ -1,0 +1,41 @@
+@font-face {
+  font-family: 'Amp Apercu';
+  src: url('__APERCU__') format('opentype');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Amp GT Super';
+  src: url('__GT_SUPER__') format('woff2');
+  font-display: swap;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #faf9f5; color: #272120; font-family: 'Amp Apercu', Arial, sans-serif; }
+#__bundler_thumbnail {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  min-height: 100%;
+  overflow: auto;
+  background: #faf9f5;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  padding: clamp(24px, 5vw, 64px);
+}
+.startup-content {
+  align-self: center;
+  justify-self: center;
+  width: 100%;
+  max-width: 760px;
+  text-align: center;
+  padding: 48px 0;
+}
+.startup-logo { display: block; width: clamp(200px, 28vw, 280px); max-width: 100%; height: auto; margin: 0 auto 64px; }
+.startup-product { font-size: 14px; line-height: 1.5; letter-spacing: .18em; text-transform: uppercase; color: #86341e; margin-bottom: 16px; }
+.startup-title { font-family: 'Amp GT Super', Georgia, serif; font-size: clamp(32px, 6.5vw, 64px); line-height: 1.18; font-weight: 400; letter-spacing: -.04em; overflow-wrap: anywhere; }
+.startup-track { width: 144px; height: 3px; overflow: hidden; background: #dadada; margin: 40px auto 18px; }
+.startup-track::after { content: ''; display: block; width: 48px; height: 100%; background: #f46036; animation: startup-loading 1.6s ease-in-out infinite; }
+#__bundler_loading { color: #625c59; font-size: 14px; line-height: 1.5; }
+.startup-footer { border-top: 1px solid #dadada; padding-top: 20px; display: flex; justify-content: space-between; gap: 20px; font-size: 13px; line-height: 1.5; color: #625c59; }
+@keyframes startup-loading { 0% { transform: translateX(-48px); } 100% { transform: translateX(144px); } }
+@media (prefers-reduced-motion: reduce) { .startup-track::after { animation: none; transform: translateX(48px); } }
+@media (max-width: 480px) { .startup-logo { margin-bottom: 48px; } .startup-footer { font-size: 12px; } }

@@ -10,3 +10,6 @@ desktop.ini
 # Interna dokument - ska ALDRIG till GitHub
 CLAUDE.md
 RELEASE_NOTES*.md
+
+# Genererad forhandsvisning av startskarmen
+laddkalkylator/startskarm-preview.html
