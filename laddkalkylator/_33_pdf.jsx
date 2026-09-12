@@ -941,7 +941,14 @@ function PDFCompare({ data }) {
               <PDFCompareRow k="Uttag" v={inp.outlets} />
               <PDFCompareRow k="SmartHubs" v={out.hubs} />
               <PDFCompareRow k="Parkering" v={`${inp.parkingHours} h`} />
-              <PDFCompareRow k="Topp" v={`${Math.round(inp.peakOcc * 100)} %`} />
+              {/* "Topp" visade REGLAGETS värde men såg ut som ett resultat.
+                  Med kontorsprofil och 95 % på reglaget är den faktiska toppen
+                  87 % — rapporten påstod alltså en högre beläggning än modellen
+                  räknar med. PDFEditorial visar båda sedan v3.8.3
+                  ("Peak-beläggning (profil)" / "Faktisk topp"); compare fick
+                  aldrig samma fix. Samma två rader och samma ord här. */}
+              <PDFCompareRow k="Peak-beläggning" v={`${Math.round(inp.peakOcc * 100)} %`} />
+              <PDFCompareRow k="Faktisk topp" v={`${Math.round((out.peakOccupancyPct || 0) * 100)} %`} />
               <PDFCompareRow k="kW/hub" v={inp.capPerHub} />
               {inp.systemCap != null && <PDFCompareRow k="Systemtak" v={`${inp.systemCap} kW`} />}
 
@@ -958,6 +965,24 @@ function PDFCompare({ data }) {
                 {isLimited && <PDFCompareRow k="Effektiv" v={`${out.effectiveCap} kW`} highlight={BRAND.accentDeep} />}
                 <PDFCompareRow k="Total/dygn" v={`${Amp.fmt(out.totalEnergyDay, { digits: 0 })} kWh`} />
               </div>
+
+              {/* Jämförelserapporten hade INGA varningar alls — pdfWarnings()
+                  anropas bara av PDFEditorial. Ett scenario med lång
+                  parkeringstid och låg beläggning kunde därför skriva ut
+                  148,6 kWh och "922 km" rakt in i kundens hand utan att något
+                  sades. Varningen hör hemma i kortet snarare än i en remsa:
+                  den gäller ett scenario, inte rapporten. */}
+              {data.car.battery > 0 && out.perOutletKWh > data.car.battery && (
+                <div style={{
+                  marginTop: 8, padding: '6px 7px',
+                  background: BRAND.accentWash,
+                  borderLeft: `2px solid ${BRAND.accent}`,
+                  fontSize: 7.5, lineHeight: 1.35, color: BRAND.ink2,
+                }}>
+                  ⚠ Över {data.car.name}s batteri ({Amp.fmt(data.car.battery, { digits: 0 })} kWh).
+                  Bilen kan inte ta emot hela mängden — ange energibehov per bil.
+                </div>
+              )}
             </div>
           );
         })}

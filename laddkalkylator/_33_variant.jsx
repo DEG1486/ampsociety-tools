@@ -115,7 +115,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
   return {
     mode: 'compare',
     scenarios: computed,
-    car: { name: car.name, kwh100: car.kwh100 },
+    car: { name: car.name, kwh100: car.kwh100, battery: car.battery ?? null },
     const: {
       capPerHub: C.CAP_PER_HUB_KW, outletsPerHub: C.OUTLETS_PER_HUB,
       carAcLimit: carAcLimit ?? C.CAR_AC_LIMIT_KW,
