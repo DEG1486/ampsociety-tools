@@ -7,6 +7,13 @@
 # Byggkontrollen fångar en annan tyst klass: appen är en enda HTML-fil med
 # källkoden komprimerad inuti, så en ändrad källfil utan omkört build37.ps1
 # committas utan att något säger ifrån — och fixen syns aldrig live.
+#
+# test-fynd.mjs fångar en TREDJE klass. Invariantsviten testar egenskaper och
+# var grön genom alla fem blockerare i granskningen 2026-09-13 — den kunde inte
+# se dem, eftersom de satt i presentationen eller i funktioner sviten aldrig
+# körde. Den nya sviten testar facit: varje spärr motsvarar ett konkret fynd och
+# faller om just det fyndet återuppstår. Mutationstestad: 9 av 9 återinförda fel
+# fångades.
 
 name: Kontroll
 
@@ -29,6 +36,9 @@ jobs:
 
       - name: Invariantsvit (~69 000 fall)
         run: node laddkalkylator/test-invarianter.mjs
+
+      - name: Regressionsspärrar för granskningsfynden
+        run: node laddkalkylator/test-fynd.mjs
 
       - name: index.html i synk med källkoden
         run: node laddkalkylator/verifiera-bygge.mjs

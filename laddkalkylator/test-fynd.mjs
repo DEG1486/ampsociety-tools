@@ -1,0 +1,360 @@
+// test-fynd.mjs — regressionsspärrar för formelgranskningen 2026-09-13.
+//
+// Kör:  node laddkalkylator/test-fynd.mjs
+//       node laddkalkylator/test-fynd.mjs --json
+//
+// VARFÖR DEN HÄR FILEN FINNS, utöver test-invarianter.mjs:
+//
+// Invariantsviten testar EGENSKAPER — att modellen inte motsäger sig själv
+// eller fysiken. Den är grön genom hela granskningen 2026-09-13 och var grön
+// genom alla fem blockerare. Den kunde inte se dem, av två skäl:
+//
+//   1. Den kör bara computeEnergy. computeEconomics, computeGridAssessment och
+//      computeHubs hade inget skyddsnät alls — och det är där paybacken och
+//      elnätsutlåtandet bor, alltså de tal som avgör en affär.
+//   2. Merparten av fynden satt i PRESENTATIONEN: rätt beräkning, fel etikett,
+//      fel fält uthämtat, eller en varning som fanns på skärmen men inte i
+//      kundrapporten. Ingen egenskap hos räknemotorn bryts av det.
+//
+// Den här sviten testar därför FACIT, inte egenskaper: varje kontroll motsvarar
+// ett konkret fynd och faller om just det fyndet återuppstår. Källkods-
+// kontrollerna längst ned är medvetet grova strängmatchningar — de är billiga,
+// de fångar den vanligaste återfallsformen (någon tar bort en rad), och de
+// säger i klartext vilket fynd som brutits.
+//
+// Lägg till en spärr här varje gång en granskning hittar något som inte är en
+// egenskap. Den kostar sekunder och betalar sig första gången.
+
+import fs from 'node:fs';
+import vm from 'node:vm';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const harHar = path.dirname(fileURLToPath(import.meta.url));
+const JSON_UT = process.argv.includes('--json');
+
+function laddaCalc() {
+  const src = fs.readFileSync(path.join(harHar, '_33_calc.js'), 'utf8').replace(/^﻿/, '');
+  const ctx = { window: {}, console: { warn() {}, log() {}, error() {} } };
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx, { filename: '_33_calc.js' });
+  if (!ctx.window.Amp5Calc) throw new Error('calc.js satte aldrig window.Amp5Calc');
+  return ctx.window.Amp5Calc;
+}
+const C = laddaCalc();
+const las = (f) => fs.readFileSync(path.join(harHar, f), 'utf8').replace(/^﻿/, '');
+const VARIANT = las('_33_variant.jsx');
+const PDF = las('_33_pdf.jsx');
+const CALC = las('_33_calc.js');
+
+// --- testregister --------------------------------------------------------
+const test = [];
+const lagg = (fynd, namn, fn) => test.push({ fynd, namn, fn });
+
+const energi = (o = {}) => C.computeEnergy(Object.assign({
+  outlets: 20, hubs: 1, capPerHub: 44, systemCap: null, parkingHours: 9,
+  profileHours: C.PROFILES.office.hours, peakOccupancyPct: 0.6,
+  hwLimitKW: 11, efficiency: 0.95, sessionNeedKWh: null, strategy: 'priority',
+}, o));
+
+// =========================================================================
+// RÄKNEMOTORN — funktioner som saknade skyddsnät helt
+// =========================================================================
+
+lagg('täckning', 'ekonomi: summor och identiteter', () => {
+  const fel = [];
+  for (const m of [0, 250000, 2000000]) for (const i of [0, 150000])
+  for (const ep of [0, 2.5]) for (const cf of [0, 3.5]) for (const pt of [0, 60])
+  for (const om of [0, 0.03]) for (const d of [21, 30]) for (const g of [0, 50000, 9e9]) {
+    const r = C.computeEconomics({
+      materialCost: m, installationCost: i, electricityPrice: ep, chargingFee: cf,
+      totalEnergyDay: 800, gridEnergyDay: 800 / 0.95, powerTariff: pt,
+      peakPowerKW: 44, omPctYear: om, daysPerMonth: d, investmentGrant: g,
+    });
+    const fall = `m=${m} i=${i} el=${ep} avg=${cf} tar=${pt} om=${om} d=${d} g=${g}`;
+    const delar = r.netCapitalCost + r.lccEnergyCost + r.lccPowerCost + r.lccOmCost;
+    if (Math.abs(delar - r.lccTotal) > 1e-6 * Math.max(1, r.lccTotal)) fel.push(`lccTotal ≠ delarna (${fall})`);
+    if (Math.abs(r.monthlyEnergyCost * r.lccYears * 12 - r.lccEnergyCost) > 1e-6 * Math.max(1, r.lccEnergyCost)) fel.push(`lccEnergyCost ≠ månad × ${r.lccYears} år (${fall})`);
+    if (r.investmentGrant > r.capitalCost + 1e-9) fel.push(`stödet överstiger kapitalet (${fall})`);
+    if (r.paybackYears != null && r.paybackYears < 0) fel.push(`negativ payback (${fall})`);
+    if (r.paybackYears != null && r.monthlyNet <= 0) fel.push(`payback utan positivt netto (${fall})`);
+    if (r.paybackYears != null && Math.abs(r.netCapitalCost / r.monthlyNet / 12 - r.paybackYears) > 1e-9 * Math.max(1, r.paybackYears)) fel.push(`paybackformeln (${fall})`);
+    if (r.lcoe != null && r.lcoe < 0) fel.push(`negativ LCoE (${fall})`);
+    // Kostnaden räknas på INKÖPT volym, intäkten på LEVERERAD (η-fixen i v3.8).
+    if (r.monthlyEnergyKWh > 0 && Math.abs(r.monthlyPurchasedKWh / r.monthlyEnergyKWh - 1 / 0.95) > 1e-9) fel.push(`inköpt/levererad ≠ 1/η (${fall})`);
+    // LCoE kan aldrig understiga vad elen kostar per levererad kWh.
+    if (r.lcoe != null && ep > 0 && r.lcoe < ep / 0.95 - 1e-9) fel.push(`LCoE under elpriset (${fall})`);
+  }
+  return fel;
+});
+
+lagg('täckning', 'elnät: formel, status och kostnadsregimer', () => {
+  const fel = [];
+  for (let A = 16; A <= 400; A += 4) for (let L = 0; L <= 90; L += 10)
+  for (const peak of [0, 10, 44, 132, 500]) for (const inst of [undefined, 44, 132]) {
+    const r = C.computeGridAssessment({ fuseSizeA: A, existingLoadPct: L / 100, systemPeakKW: peak, capPerHub: 44, installedHubs: 1, installedCapKW: inst });
+    const fall = `${A}A last=${L}% topp=${peak} inst=${inst ?? '-'}`;
+    const servis = Math.sqrt(3) * 400 * A / 1000;
+    if (Math.abs(r.servisKW - servis) > 1e-9) fel.push(`serviseffekten ≠ √3·400·I (${fall})`);
+    const dim = Math.max(peak, inst || 0);
+    if (Math.abs(r.surplusKW - (servis * (1 - L / 100) - dim)) > 1e-9) fel.push(`överskottet ≠ tillgängligt − dimensionerande (${fall})`);
+    if (r.surplusKW < -1e-12 && r.status !== 'upgrade') fel.push(`negativt överskott utan servisutökning (${fall})`);
+    if (r.status === 'ok' && r.marginRatio < C.GRID_MARGIN - 1e-12) fel.push(`grön status under marginalkravet (${fall})`);
+    if ((r.extraNeeded > 0) !== (r.upgradeCostLow > 0)) fel.push(`kostnad och behov går isär (${fall})`);
+    if (r.upgradeCostHigh > 0 && r.upgradeCostHigh < r.upgradeCostLow) fel.push(`hög < låg kostnad (${fall})`);
+  }
+  return fel;
+});
+
+lagg('täckning', 'hubs: maximum tas alltid, målet stämmer', () => {
+  const fel = [];
+  for (const o of [1, 20, 54, 55, 108, 200]) for (const mal of [0, 10, 30, 120])
+  for (const L of [1, 4, 9, 24]) for (const occ of [0, 0.3, 0.85, 1]) for (const cap of [null, 60, 200]) {
+    const r = C.computeHubs({ outlets: o, desiredKWhPerOutlet: mal, parkingHours: L, occupancyPct: occ, capPerHub: 44, systemCap: cap, efficiency: 0.95, hwLimitKW: 11 });
+    const fall = `${o}u mål=${mal} L=${L} occ=${occ} cap=${cap ?? '-'}`;
+    if (r.hubs < Math.ceil(o / C.OUTLETS_PER_HUB)) fel.push(`färre hubbar än uttagen kräver (${fall})`);
+    if (r.hubs < r.hubsBySessions) fel.push(`färre hubbar än sessionstaket kräver (${fall})`);
+    if (r.deliveredEnergyPerOutlet > r.actualEnergyPerOutlet + 1e-9) fel.push(`levererat > kapacitetstaket (${fall})`);
+    if (mal > 0 && occ > 0) {
+      const nar = r.deliveredEnergyPerOutlet >= mal - 1e-6;
+      if (r.achievesTarget !== nar) fel.push(`achievesTarget motsäger levererat (${fall})`);
+      // I felfall får kapacitetstaket aldrig visas som mer än det levererade —
+      // PDF:ens missat-mål-varning läser actualEnergyPerOutlet (granskningsfynd G1).
+      if (!r.achievesTarget && r.actualEnergyPerOutlet > r.deliveredEnergyPerOutlet + 1e-9) fel.push(`kapacitetstak > levererat i felfall (${fall})`);
+    }
+    if (!r.achievesTarget && !r.limitReasons.length) fel.push(`missat mål utan orsak (${fall})`);
+  }
+  return fel;
+});
+
+// =========================================================================
+// ENSKILDA FYND — räknemotorn
+// =========================================================================
+
+lagg('B1', 'elnätsstatus hålls mot anläggningens märkeffekt', () => {
+  const fel = [];
+  for (let A = 16; A <= 400; A += 4) for (let L = 0; L <= 80; L += 10)
+  for (const inst of [44, 88, 132]) for (const peak of [5, 20, 44]) {
+    const r = C.computeGridAssessment({ fuseSizeA: A, existingLoadPct: L / 100, systemPeakKW: Math.min(peak, inst), capPerHub: 44, installedHubs: Math.round(inst / 44), installedCapKW: inst });
+    const fall = `${A}A last=${L}% installerat=${inst} topp=${Math.min(peak, inst)}`;
+    // Kärnan i B1: grönt ljus får aldrig ges när märkeffekten inte ryms.
+    if (r.status === 'ok' && inst > r.availableKW + 1e-9) fel.push(`grönt trots att märkeffekten inte ryms (${fall})`);
+    // ...och returobjektet får inte motsäga sig självt åt något håll.
+    if (r.status === 'ok' && r.hubsWithinAvailable < Math.round(inst / 44)) fel.push(`grönt men hubsWithinAvailable för lågt (${fall})`);
+  }
+  // Bakåtkompatibilitet: utan installedCapKW gäller det gamla beteendet exakt.
+  for (const A of [63, 125, 250]) for (const peak of [10, 44, 100]) {
+    const u = C.computeGridAssessment({ fuseSizeA: A, existingLoadPct: 0.2, systemPeakKW: peak, capPerHub: 44, installedHubs: 1 });
+    if (Math.abs(u.surplusKW - (u.availableKW - peak)) > 1e-9) fel.push(`bakåtkompatibiliteten bruten (${A}A topp=${peak})`);
+    if (u.installedCapKW !== null) fel.push(`installedCapKW ska vara null när den utelämnas (${A}A)`);
+  }
+  return fel;
+});
+
+lagg('B2', 'ingen ledig kapacitet medan bilar köar', () => {
+  const fel = [];
+  for (const prof of ['office', 'mall', 'residential', 'flat'])
+  for (const o of [20, 54, 108]) for (const h of [1, 2, 3])
+  for (const L of [2, 4, 6, 9, 12]) for (const occ of [0.3, 0.6, 0.85]) for (const need of [5, 10, 20]) {
+    const r = energi({ outlets: o, hubs: h, parkingHours: L, profileHours: C.PROFILES[prof].hours, peakOccupancyPct: occ, sessionNeedKWh: need });
+    // Köar bilar som VILL ha energi, och ryms alla som sessioner, då måste
+    // anläggningen ligga på sitt tak — annars kastas tilldelad kapacitet.
+    if ((r.queuedAtPeak || 0) > 0.5 && (r.sessionOverflowMax || 0) <= 0.5) {
+      const t = r.busiestHour;
+      // Rätt gräns är 6 A-GOLVET, inte 100 %. allocatePower räknar hur många
+      // bilar som ryms med startströmmen (16 A = 11,085 kW) medan varje bil
+      // bara drar sitt eget tak (11 kW), så en residual under en bils
+      // minimiström blir över. Den kan fysiskt inte starta ännu en bil —
+      // handbok 8.3.1: inget fordon laddar mellan 0 och 6 A. Kastad kapacitet
+      // är därför ledig effekt som ÖVERSTIGER minChargeKW.
+      const ledigt = r.effectiveCap - r.hourly[t];
+      if (ledigt > r.minChargeKW + 1e-6) {
+        fel.push(`${ledigt.toFixed(2)} kW ledigt (> 6 A-golvet ${r.minChargeKW.toFixed(2)}) med `
+          + `${r.queuedAtPeak.toFixed(1)} bilar i kö (${prof} ${o}u/${h}hub L=${L} occ=${occ} behov=${need})`);
+      }
+    }
+  }
+  return fel.slice(0, 5);
+});
+
+lagg('B2', 'simuleringen når stationärt läge', () => {
+  const fel = [];
+  for (const prof of ['office', 'mall', 'residential', 'flat'])
+  for (const L of [1, 8, 15, 20, 23, 24]) for (const occ of [0.1, 0.5, 0.9])
+  for (const o of [20, 54, 160]) for (const need of [null, 10, 30]) for (const hw of [11, 22]) {
+    const r = energi({ outlets: o, hubs: 1, parkingHours: L, profileHours: C.PROFILES[prof].hours, peakOccupancyPct: occ, sessionNeedKWh: need, hwLimitKW: hw });
+    if (!r.simKonvergerade) fel.push(`ej stationär efter ${r.simDygn} dygn (${prof} L=${L} occ=${occ} ${o}u behov=${need} hw=${hw})`);
+    // Den identitet som bröts med 13,2 % när konvergenstestet bara såg flödet.
+    if (r.totalEnergyDay > 1) {
+      const via = r.perOutletKWh * r.totalSessionsPerDay;
+      const d = Math.abs(via - r.totalEnergyDay) / r.totalEnergyDay;
+      if (d > 1e-6) fel.push(`energibalansen ${(100 * d).toFixed(3)} % fel (${prof} L=${L} occ=${occ} ${o}u behov=${need} hw=${hw})`);
+    }
+  }
+  return fel.slice(0, 5);
+});
+
+lagg('B3', 'räckvidden drar av laddförlusten exakt en gång', () => {
+  const fel = [];
+  // kwh100 är EV Databases VERKLIGA förbrukning och är BATTERISIDIG. Ledet
+  // omvandlar uttagsmätt AC till energi i batteriet och ska vara kvar. Se noten
+  // vid CARS i _33_calc.js innan någon "rättar" det här igen.
+  if (!(C.ONBOARD_EFFICIENCY > 0.8 && C.ONBOARD_EFFICIENCY < 1)) fel.push(`ONBOARD_EFFICIENCY orimlig: ${C.ONBOARD_EFFICIENCY}`);
+  const vantat = 30 * C.ONBOARD_EFFICIENCY / 14.5 * 100;
+  if (Math.abs(C.rangeKm(30, 14.5) - vantat) > 1e-9) fel.push('rangeKm tillämpar inte ONBOARD_EFFICIENCY');
+  for (const bil of C.CARS) {
+    if (!(bil.kwh100 > 10 && bil.kwh100 < 30)) fel.push(`${bil.name}: kwh100 ${bil.kwh100} utanför rimligt intervall`);
+    if (!(bil.battery > 20 && bil.battery < 130)) fel.push(`${bil.name}: batteri ${bil.battery} utanför rimligt intervall`);
+    const km = bil.battery / bil.kwh100 * 100;
+    if (!(km > 250 && km < 700)) fel.push(`${bil.name}: ${km.toFixed(0)} km på fullt batteri — kontrollera mot ev-database.org`);
+  }
+  return fel;
+});
+
+lagg('L1', 'ovaliderade indata ur URL-hashen clampas', () => {
+  const fel = [];
+  const nan = energi({ peakOccupancyPct: NaN });
+  if (!nan.occupancy.every(Number.isFinite)) fel.push('peakOccupancyPct: NaN ger NaN i beläggningskurvan');
+  const tva = energi({ peakOccupancyPct: 2 });
+  if (tva.presentAtPeak > tva.maxOutlets + 1e-9) fel.push(`peakOccupancyPct: 2 ger ${tva.presentAtPeak.toFixed(1)} bilar på ${tva.maxOutlets} uttag`);
+  const neg = energi({ hubs: -3 });
+  if (!(neg.hubs >= 1 && neg.effectiveCap > 0 && neg.sessionCapacity > 0)) fel.push(`hubs: -3 ger hubs=${neg.hubs} cap=${neg.effectiveCap} sessionstak=${neg.sessionCapacity}`);
+  return fel;
+});
+
+lagg('L2', 'energibehov under golvet tolkas som obegränsat', () => {
+  const fel = [];
+  const obegransat = energi({ sessionNeedKWh: null }).perOutletKWh;
+  for (const n of [0, 0.0001, 0.05]) {
+    const r = energi({ sessionNeedKWh: n });
+    if (r.sessionNeedKWh !== null) fel.push(`behov ${n} tolkas inte som obegränsat`);
+    if (Math.abs(r.perOutletKWh - obegransat) > 1e-9) fel.push(`behov ${n} ger inte samma som tomt fält`);
+  }
+  if (energi({ sessionNeedKWh: 0.5 }).sessionNeedKWh !== 0.5) fel.push('behov 0,5 kWh ska respekteras');
+  return fel;
+});
+
+lagg('L7/L8', 'API:t: en källa för marginalen, ingen död export', () => {
+  const fel = [];
+  if (C.shapeToPeak !== undefined) fel.push('shapeToPeak är tillbaka på API:t — den nås av ingen kodväg');
+  if (typeof C.GRID_MARGIN !== 'number') fel.push('GRID_MARGIN saknas på API:t');
+  // Exakt EN deklaration av tröskeln, och computeGridAssessment ska läsa den.
+  if ((CALC.match(/=\s*0\.10\s*;/g) || []).length !== 1) fel.push('marginaltröskeln finns på fler än ett ställe — GRID_MARGIN ska vara enda källan');
+  if (!/const MARGIN = GRID_MARGIN;/.test(CALC)) fel.push('computeGridAssessment läser inte GRID_MARGIN');
+  // Statusen ska vippa exakt vid GRID_MARGIN.
+  const servis = Math.sqrt(3) * 400 * 63 / 1000, tillg = servis * 0.8;
+  const strax = C.computeGridAssessment({ fuseSizeA: 63, existingLoadPct: 0.2, systemPeakKW: tillg * (1 - C.GRID_MARGIN) + 0.01 });
+  if (strax.status === 'ok') fel.push('grön status strax under marginalkravet');
+  return fel;
+});
+
+// =========================================================================
+// PRESENTATIONSFYND — den klass invariantsviten inte kan se
+// =========================================================================
+
+const kallkod = [
+  ['B4', 'kövarningens spärrfält följer med till PDF:en', VARIANT,
+    /sessionNeedKWh:\s*q\.sessionNeedKWh/,
+    'queue-objektet i buildPdfData saknar sessionNeedKWh — PDF:ens kövarning spärrar på det fältet och blir då död kod'],
+  ['B5', 'investeringskalkylen ser bilen', VARIANT,
+    /function EconomicsPanel\(\{\s*economics,\s*car,\s*perSessionKWh\s*\}\)/,
+    'EconomicsPanel tar inte emot car/perSessionKWh och kan därför inte varna för att intäkt och payback bygger på mer energi än bilen rymmer'],
+  ['B5', 'PDF:ens batterivarning nämner kalkylen', PDF,
+    /intäkten nedan förutsätter båda|energin i kalkylen nedan förutsätter båda/,
+    'PDF-varningen nämner bara räckvidden, inte att intäkt och payback bygger på samma energi'],
+  ['A1', 'jämförelseläget räknar med laddavgiften', VARIANT,
+    // Hårdkodad nolla i ett computeEconomics-anrop, inte i en kommentar.
+    /^(?![\s\S]*electricityPrice,\s*chargingFee:\s*0,)[\s\S]*$/,
+    'chargingFee: 0 är hårdkodad någonstans — jämförelseläget rangordnar då efter kostnad i stället för lönsamhet'],
+  ['A1', 'scenariokorten visar driftnettot', VARIANT, /Driftnetto\/mån/,
+    'Driftnetto-raden saknas i ScenarioCard'],
+  ['A1', 'jämförelserapporten visar driftnettot', PDF, /Driftnetto\/mån/,
+    'Driftnetto-raden saknas i PDFCompare'],
+  ['A2', 'paybackrutan har ett rimlighetstak', VARIANT, /längre än kalkylens/,
+    'den gröna paybackrutan saknar gräns mot LCC-horisonten och kan visa 16 år grönt bredvid en livscykelförlust'],
+  ['A4', 'kapacitetstaket kallas inte "faktisk"', VARIANT,
+    // Bara etiketten i JSX-position, inte kommentaren som förklarar historiken.
+    /^(?![\s\S]*\['Faktisk kWh \/ uttag')[\s\S]*$/,
+    'etiketten "Faktisk kWh / uttag" är tillbaka — den sätts på actualEnergyPerOutlet, som är ett kapacitetstak'],
+  ['A4', 'levererat visas bredvid kapacitetstaket', VARIANT, /Levererat \/ laddtillfälle/,
+    'raden "Levererat / laddtillfälle" saknas, så kapacitetstaket står ensamt'],
+  ['A5', 'kostnadsrutan kräver ett faktiskt behov', VARIANT,
+    /status === 'marginal'\)\s*&&\s*upgradeCostLow > 0/,
+    'skärmens kostnadsruta saknar spärren upgradeCostLow > 0 och skriver "0 kkr–0 kkr" vid marginalstatus'],
+  ['A6', 'marginalen avrundas nedåt', VARIANT, /Math\.floor\(\(assessment\.marginRatio/,
+    'marginalraden avrundas inte nedåt och kan skriva "10 % (krav 10 %)" under en orange rubrik'],
+  ['A7', 'sessionstaksvarningen finns i scenariokortet', VARIANT, /utan laddsession/,
+    'ScenarioCard varnar inte när fler bilar är närvarande än hubben tar sessioner för'],
+  ['A7', 'sessionstaksvarningen finns i jämförelserapporten', PDF, /utan laddsession/,
+    'PDFCompare varnar inte för sessionstaket'],
+  ['A7', 'batterivarningen finns på compare-skärmen', VARIANT, /car && car\.battery > 0 && energy\.perOutletKWh > car\.battery/,
+    'ScenarioCard saknar batterivarningen som PDFCompare har'],
+  ['M2', 'dagräkningen är samma i alla tre ekonomianrop', VARIANT, null,
+    'de tre computeEconomics-anropen använder inte samma daysPerMonth-uttryck'],
+  ['M3', 'reduktionsraden döljs när det inte finns någon', VARIANT, /peakReductionKW \|\| 0\) >= 0\.5 &&/,
+    '"Reduktion −0 kW" kan åter visas bredvid en anläggning vars topp steg'],
+  ['M5', 'skärmen visar både levererad och inköpt volym', VARIANT, /Energi \/ månad · inköpt/,
+    'inköpt volym saknas på skärmen — energikostnaden går då inte att kontrollräkna'],
+  ['M7', 'rapporten redovisar effekttariffens sats', PDF, /kr effektavgift `\s*\n?\s*\+ `\(\$\{Amp\.fmt\(powerTariff/,
+    'effekttariffens sats saknas i rapporten — beloppet går inte att kontrollräkna'],
+  ['M8', 'delad länk flaggas i investeringskalkylen', VARIANT, /öppnades från en delad länk/,
+    'noten om att kostnadsfälten är mottagarens egna saknas'],
+  ['B1', 'PDF-badgen visar märkeffekten', PDF, /label: 'Märkeffekt'/,
+    'PDF:ens elnätsbadge visar inte anläggningens märkeffekt bredvid den tillgängliga effekten'],
+  ['B1', 'PDF-badgens kolumnantal följer kolumnerna', PDF, /repeat\(\$\{cols\.length\}, 1fr\)/,
+    'gridTemplateColumns är åter hårdkodad — en extra kolumn hamnar då på egen rad och sida 2 spricker'],
+];
+
+for (const [fynd, namn, kalla, re, meddelande] of kallkod) {
+  lagg(fynd, namn, () => {
+    if (fynd === 'M2' && re === null) {
+      const n = (VARIANT.match(/daysPerMonth: activeDaysPerMonth \?\? profile\.daysPerMonth \?\? 30,/g) || []).length;
+      return n === 3 ? [] : [`${meddelande} (hittade ${n} av 3)`];
+    }
+    return re.test(kalla) ? [] : [meddelande];
+  });
+}
+
+// Varningsparitet: varje varning som kan visas på skärmen ska kunna visas i
+// kundrapporten för samma indata, och tvärtom. Det var B4:s hela felklass.
+lagg('paritet', 'varningar finns i både skärm och rapport', () => {
+  const fel = [];
+  const par = [
+    ['kövarning', /Kö vid topplast/, /Kö vid topplast/],
+    ['sessionstak', /utan laddsession/, /utan laddsession/],
+    ['batteri', /batteri/i, /batteri/i],
+  ];
+  for (const [namn, reSkarm, rePdf] of par) {
+    if (!reSkarm.test(VARIANT)) fel.push(`${namn}: saknas på skärmen`);
+    if (!rePdf.test(PDF)) fel.push(`${namn}: saknas i kundrapporten`);
+  }
+  return fel;
+});
+
+// =========================================================================
+// Kör
+// =========================================================================
+const resultat = [];
+let fel = 0;
+for (const t of test) {
+  let brott = [];
+  try { brott = t.fn() || []; } catch (e) { brott = [`KRASCH: ${e.message}`]; }
+  if (brott.length) fel++;
+  resultat.push({ fynd: t.fynd, namn: t.namn, ok: brott.length === 0, brott });
+}
+
+if (JSON_UT) {
+  console.log(JSON.stringify({ antal: test.length, fel, resultat }, null, 2));
+} else {
+  console.log('\nAmp5 - regressionsspärrar för granskningsfynden\n');
+  let sistaFynd = '';
+  for (const r of resultat) {
+    if (r.fynd !== sistaFynd) { console.log(`  ── ${r.fynd} ${'─'.repeat(Math.max(0, 54 - r.fynd.length))}`); sistaFynd = r.fynd; }
+    console.log(`  ${r.ok ? 'OK  ' : 'FEL '} ${r.namn}`);
+    for (const b of r.brott) console.log(`         ${b}`);
+  }
+  console.log(`\n  ${test.length} spärrar, ${fel} brutna`);
+  console.log(fel ? '\nRESULTAT: FEL — ett åtgärdat granskningsfynd har återuppstått\n'
+                  : '\nRESULTAT: alla granskningsfynd förblir åtgärdade\n');
+}
+process.exit(fel ? 1 : 0);
