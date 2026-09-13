@@ -355,10 +355,24 @@ function pdfWarnings(data) {
     : (data.outputs && data.outputs.perOutletKWh);
   const batteri = data.inputs && data.inputs.carBattery;
   if (perSession > 0 && batteri > 0 && perSession > batteri) {
+    // Investeringskalkylen läser samma energi som räckvidden. Tidigare nämnde
+    // varningen bara räckvidden, medan intäkt och återbetalningstid byggde på
+    // exakt samma omöjliga mängd utan att något sades (granskningsfynd B5).
+    // Klausulen läggs till den BEFINTLIGA varningen i stället för som ett eget
+    // block — sida 2 är tajt, och den här varningen syns bara i just det fall
+    // där tillägget behövs.
+    const harKalkyl = data.economics && data.economics.capitalCost > 0;
+    const harIntakt = harKalkyl && data.economics.monthlyRevenue > 0;
+    // Formuleringen är medvetet hopslagen i stället för två meningar: sida 2
+    // har fast höjd, och en extra rad här trängde ut sidfoten i fall med både
+    // kö- och batterivarning. Samma information, en rad kortare.
+    const berorda = harIntakt
+      ? 'räckvidden ovan och intäkten nedan förutsätter båda'
+      : (harKalkyl ? 'räckvidden ovan och energin i kalkylen nedan förutsätter båda' : 'räckvidden ovan förutsätter');
     warns.push(`Energin per laddtillfälle (${Amp.fmt(perSession, { digits: 0 })} kWh) överstiger `
       + `${data.inputs.carName}s batteri på ${Amp.fmt(batteri, { digits: 0 })} kWh. `
       + `Anläggningen kan leverera det, men bilen kan inte ta emot det — `
-      + `räckvidden ovan förutsätter att bilen rymmer hela mängden. `
+      + `${berorda} att bilen rymmer hela mängden. `
       + `Ange ett energibehov per bil för ett realistiskt tal.`);
   }
   return warns;
@@ -366,13 +380,29 @@ function pdfWarnings(data) {
 
 function PDFWarningStrip({ warns }) {
   if (!warns.length) return null;
+  // Sidan har fast höjd och overflow: hidden, så remsan måste kunna växa utan
+  // att tränga ut sidfoten. Bilden under viker redan undan helt när varningar
+  // finns, men den ger bara 8 px. När flera varningar samsas — kö OCH batteri,
+  // efter att kövarningen väckts till liv i v3.8.7 — räcker det inte: sida 2
+  // gick från 1124 till 1153 px mot ett tak på 1123.
+  //
+  // Remsan komprimeras därför progressivt med hur mycket text den bär. 9,5 px
+  // med radavstånd 1,38 är fortfarande fullt läsbart; alternativet vore att
+  // klippa en varning tyst, vilket är precis det felet den här remsan finns
+  // till för att undvika.
+  const tecken = warns.reduce((n, w) => n + w.length, 0);
+  const tät = warns.length > 1 || tecken > 260;
   return (
     <div style={{
-      margin: '14px 56px 0 56px', padding: '8px 14px',
+      margin: tät ? '10px 56px 0 56px' : '14px 56px 0 56px',
+      padding: tät ? '6px 14px' : '8px 14px',
       background: '#FFF3E0', borderLeft: '4px solid #E65100',
-      fontSize: 9.5, lineHeight: 1.5, color: '#5C2E00', fontWeight: 600,
+      fontSize: 9.5, lineHeight: tät ? 1.38 : 1.5,
+      color: '#5C2E00', fontWeight: 600,
     }}>
-      {warns.map((w, i) => <div key={i}>⚠ {w}</div>)}
+      {warns.map((w, i) => (
+        <div key={i} style={i > 0 ? { marginTop: tät ? 3 : 5 } : null}>⚠ {w}</div>
+      ))}
     </div>
   );
 }
@@ -547,7 +577,7 @@ function PDFEditorial({ data }) {
             som blir över när texten fått sitt. Finns varningar att visa utgår
             bilden helt — en dekorativ bild ska aldrig tränga undan en varning
             eller friskrivningen (sidan har overflow: hidden och klipper tyst). */}
-        {warns.length ? <div style={{ flex: '1 1 0', minHeight: 8 }} /> : (
+        {warns.length ? <div style={{ flex: '1 1 0', minHeight: 0 }} /> : (
         <div style={{
           margin: '16px 56px 0 56px',
           flex: '1 1 0', minHeight: 40, maxHeight: 130,
@@ -1092,7 +1122,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.8.6',
+      version: '3.8.7',
     },
   };
 }

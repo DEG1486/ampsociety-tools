@@ -14,7 +14,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     projectName: projectName || '', // U2-fix: tom sträng = ej angivet; PDF visar ej default-strängen
     date: new Date().toLocaleDateString('sv-SE'),
     reportId,
-    version: '3.8.6',
+    version: '3.8.7',
   };
   const consts = {
     capPerHub, outletsPerHub: C.OUTLETS_PER_HUB,
@@ -30,6 +30,12 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     queuedAtPeak: q.queuedAtPeak, maxPresent: q.maxPresent,
     sessionCapacity: q.sessionCapacity, sessionOverflowMax: q.sessionOverflowMax,
     needLimited: q.needLimited, perCarAtPeakKW: q.perCarAtPeakKW,
+    // MÅSTE vara med. PDF:ens kövarning spärrar på `q.sessionNeedKWh != null`
+    // (samma villkor som skärmen fick i v3.8.1), och utan fältet här var det
+    // alltid undefined — varningen kunde därför ALDRIG renderas, i något fall.
+    // 295 av 480 svepta konfigurationer varnade på skärmen och teg i
+    // kundrapporten (granskningsfynd B4).
+    sessionNeedKWh: q.sessionNeedKWh,
   };
   if (mode === 'energy') {
     return {
@@ -151,7 +157,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       projectName: projectName || '', // U2-fix: tom sträng = ej angivet
       date: new Date().toLocaleDateString('sv-SE'),
       reportId,
-      version: '3.8.6',
+      version: '3.8.7',
     },
   };
 }
@@ -1430,7 +1436,13 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh1
 }
 
 // ───────── F2: EconomicsPanel ─────────
-function EconomicsPanel({ economics }) {
+// car/perSessionKWh: investeringskalkylen kunde tidigare INTE varna — den tog
+// bara emot `economics`. Hjälterutan och PDF-remsan flaggade att energin per
+// laddtillfälle överstiger bilens batteri, medan intäkten, paybacken och LCoE:n
+// byggde rakt av på samma kWh utan ett ord (granskningsfynd B5). perSessionKWh
+// är chartEnergy.perOutletKWh i BÅDA lägena — det är den storhet intäkten
+// faktiskt räknas på (totalEnergyDay = perOutletKWh × sessioner).
+function EconomicsPanel({ economics, car, perSessionKWh }) {
   const C = window.Amp5Calc;
   const {
     capitalCost, hubCapital, outletCapital, investmentGrant, netCapitalCost,
@@ -1443,6 +1455,9 @@ function EconomicsPanel({ economics }) {
     ? `${C.fmt(kr / 1_000_000, { digits: 1 })} Mkr`
     : `${C.fmt(kr / 1000, { digits: 0 })} kkr`;
   const hasRevenue = monthlyRevenue > 0;
+  // Bygger kalkylen på mer energi per laddtillfälle än bilen rymmer? Då är
+  // intäkten — och därmed paybacken och LCoE:n — för hög, inte bara räckvidden.
+  const överBatteri = car && car.battery > 0 && perSessionKWh > car.battery;
   const rows = [
     ['Energi / månad',        `${C.fmt(monthlyEnergyKWh, { digits: 0 })} kWh`],
     ['Energikostnad / månad', `${C.fmt(monthlyEnergyCost, { digits: 0 })} kr`],
@@ -1477,6 +1492,23 @@ function EconomicsPanel({ economics }) {
           </div>
         )}
       </div>
+      {/* Står FÖRE talen, inte efter: varningen kvalificerar allt under sig.
+          Hjälterutan varnar för räckvidden; här är poängen att intäkten och
+          därmed återbetalningstiden bygger på samma omöjliga mängd. */}
+      {överBatteri && (
+        <div style={{
+          padding: '9px 16px', background: I.accentWash,
+          borderBottom: `1px solid ${I.line}`, borderLeft: `3px solid ${I.accent}`,
+          fontSize: 10.5, lineHeight: 1.45, color: I.ink2,
+        }}>
+          ⚠ <strong>Kalkylen bygger på {C.fmt(perSessionKWh, { digits: 0 })} kWh per laddtillfälle</strong>
+          {' '}— mer än {car.name}s batteri på {C.fmt(car.battery, { digits: 0 })} kWh.
+          {hasRevenue
+            ? ' Intäkten och återbetalningstiden nedan är därför för optimistiska.'
+            : ' Energimängden nedan är därför för hög.'}
+          {' '}Ange <strong>energibehov per bil</strong> för ett realistiskt tal.
+        </div>
+      )}
       {/* Monthly cashflow */}
       <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 0 }}>
         {rows.map(([k, v]) => (
@@ -2088,7 +2120,7 @@ function RightPanel({ mode, energy, sizing, chartEnergy, heroKWh, heroRange, pro
 
       <div style={{ marginTop: 32, paddingBottom: 16 }}>
         <SectionTitle title="Investeringskalkyl" hint="Kostnad och återbetalningstid" />
-        <EconomicsPanel economics={economics} />
+        <EconomicsPanel economics={economics} car={car} perSessionKWh={chartEnergy.perOutletKWh} />
         {uiMode === 'simple' && (
           <div style={{
             marginTop: 12, padding: '8px 12px',
