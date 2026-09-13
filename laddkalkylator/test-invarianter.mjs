@@ -147,6 +147,48 @@ const INVARIANTER = [
       return brist > EPS ? brist : null;
     },
   },
+
+  // --- Fysiska gränser -----------------------------------------------------
+  // Invarianterna ovan jämför modellens tal MED VARANDRA. De höll hela vägen
+  // genom 148,6 kWh per session och 922 km räckvidd, eftersom de talen var
+  // internt konsistenta — de var bara omöjliga. Gränserna nedan jämför mot
+  // fysiken i stället: hårdvarans tak och dygnets längd.
+  {
+    // Ett uttag kan inte leverera mer än sitt HW-tak gånger tiden.
+    namn: 'uttagets-hw-tak',
+    check(r) {
+      const tak = C.OUTLET_HW_LIMIT_KW * 24;
+      const ov = r.kwhPerOutletPerDay - tak;
+      return ov > EPS * Math.max(1, tak) ? ov : null;
+    },
+  },
+  {
+    // En session kan inte få mer än parkeringstiden gånger uttagets tak.
+    namn: 'session-mot-tid',
+    check(r, inp) {
+      const tak = C.OUTLET_HW_LIMIT_KW * inp.parkingHours;
+      const ov = r.perOutletKWh - tak;
+      return ov > EPS * Math.max(1, tak) ? ov : null;
+    },
+  },
+  {
+    // Anläggningen kan inte ta mer ur nätet än effekttaket gånger dygnet.
+    namn: 'anlaggningens-dygnstak',
+    check(r) {
+      const tak = r.effectiveCap * 24;
+      const ov = r.totalEnergyFromGrid - tak;
+      return ov > EPS * Math.max(1, tak) ? ov : null;
+    },
+  },
+  {
+    // Fler sessioner per uttag än dygnet rymmer är omöjligt.
+    namn: 'sessioner-mot-dygnet',
+    check(r, inp) {
+      const tak = 24 / inp.parkingHours;
+      const ov = r.sessionsPerOutletPerDay - tak;
+      return ov > EPS * Math.max(1, tak) ? ov : null;
+    },
+  },
 ];
 
 // --- Formmått över parkeringstiden ---------------------------------------
@@ -233,6 +275,18 @@ const start = Date.now();
 const resultat = new Map(INVARIANTER.map((i) => [i.namn, { namn: i.namn, brott: 0, varsta: 0, varstaFall: null }]));
 let antal = 0, kraschar = 0, forstaKrasch = null;
 
+// --- Verklighetsmått -----------------------------------------------------
+// Modellen tar MEDVETET inget batteritak: utan angivet energibehov laddar bilen
+// så länge den står. Det är rätt om anläggningen och fel om bilen, och det gav
+// 148,6 kWh per session och "922 km" i v3.8.4 — internt konsistent hela vägen,
+// alltså osynligt för invarianterna ovan.
+//
+// Det här är därför ett MÅTT, inte ett krav. Att göra det till en hård invariant
+// vore att kräva att modellen slutar göra det den är byggd att göra. Men talet
+// ska synas i varje körning, så nästa orimlighet inte hinner bli en kundrapport.
+const STORSTA_BATTERI = Math.max(...C.CARS.map((c) => c.battery || 0));
+let overBatteri = 0, varstaSession = 0, varstaSessionFall = null;
+
 for (const inp of fall()) {
   antal++;
   let r;
@@ -242,6 +296,13 @@ for (const inp of fall()) {
     kraschar++;
     if (!forstaKrasch) forstaKrasch = { fel: e.message, inp: beskriv(inp) };
     continue;
+  }
+  if (r.perOutletKWh > STORSTA_BATTERI) {
+    overBatteri++;
+    if (r.perOutletKWh > varstaSession) {
+      varstaSession = r.perOutletKWh;
+      varstaSessionFall = beskriv(inp);
+    }
   }
   for (const inv of INVARIANTER) {
     const avvikelse = inv.check(r, inp);
@@ -291,6 +352,7 @@ if (JSON_UT) {
   console.log(JSON.stringify({
     antal, kraschar, sekunder,
     invarianter: [...resultat.values()],
+    overBatteri, storstaBatteri: STORSTA_BATTERI, varstaSession, varstaSessionFall,
     svep, platsSpridningMax, fallandeTotalt, taggTotalt, taggMojliga,
   }, null, 2));
 } else {
@@ -304,6 +366,16 @@ if (JSON_UT) {
   if (kraschar) {
     console.log(`\n  FEL  kraschar: ${kraschar}  forsta: ${forstaKrasch.fel}`);
     console.log(`       ${forstaKrasch.inp}`);
+  }
+
+  console.log('\n  VERKLIGHETSMATT (modellen har inget batteritak - medvetet)');
+  const andel = antal > 0 ? (overBatteri / antal * 100) : 0;
+  console.log(`  ${'energi/session > storsta batteriet'.padEnd(36)} ${overBatteri} av ${antal} (${andel.toFixed(1)} %)`);
+  console.log(`  ${'storsta batteriet i CARS'.padEnd(36)} ${STORSTA_BATTERI} kWh`);
+  if (overBatteri > 0) {
+    console.log(`  ${'varsta fallet'.padEnd(36)} ${varstaSession.toFixed(1)} kWh`);
+    console.log(`       ${varstaSessionFall}`);
+    console.log('       (appen varnar i UI och PDF; talet ar inte ett raknefel)');
   }
 
   console.log('\n  FORMMATT (svep over parkeringstid 1-24 h)');

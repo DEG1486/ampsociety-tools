@@ -93,7 +93,9 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
   };
 }
 
-function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, strategy, reportId, projectName }) {
+function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, strategy,
+                              fuseSizeA, existingLoadPct, electricityPrice, powerTariff,
+                              reportId, projectName }) {
   const C = window.Amp5Calc;
   const computed = scenarios.map((s) => {
     const profile = C.PROFILES[s.profileKey];
@@ -104,11 +106,27 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       hwLimitKW: carAcLimit, efficiency, sessionNeedKWh, strategy,
       profileLabel: profile.label,
     });
+    // Elnät och drift per scenario — samma beräkning som ComparePanel visar på
+    // skärmen, så rapporten och skärmen inte kan gå isär. Investeringen ingår
+    // inte: klumpbeloppen går inte att fördela per scenario.
+    const grid = C.computeGridAssessment({
+      fuseSizeA, existingLoadPct, systemPeakKW: e.peakPowerKW,
+      capPerHub: s.capPerHub, installedHubs: e.hubs,
+    });
+    const ek = C.computeEconomics({
+      totalEnergyDay: e.totalEnergyDay, gridEnergyDay: e.totalEnergyFromGrid,
+      materialCost: 0, installationCost: 0, investmentGrant: 0,
+      electricityPrice, chargingFee: 0, powerTariff,
+      peakPowerKW: e.peakPowerKW, omPctYear: 0,
+      daysPerMonth: profile.daysPerMonth ?? 30,
+    });
     return {
       name: s.name,
       colorIndex: s.colorSlot,
       inputs: { ...s, profileLabel: profile.label },
       outputs: e,
+      grid,
+      ek,
       rangeKm: C.rangeKm(e.perOutletKWh, car.kwh100),
     };
   });
@@ -598,9 +616,11 @@ function InstrumentVariant() {
           efficiency={efficiency} setEfficiency={setEfficiency}
           sessionNeedKWh={sessionNeedKWh} setSessionNeedKWh={setSessionNeedKWh}
           strategy={strategy}
+          fuseSizeA={fuseSizeA} existingLoadPct={existingLoadPct}
+          electricityPrice={electricityPrice} powerTariff={powerTariff}
           projectName={projectName} setProjectName={setProjectName}
           onExportPdf={() => {
-            const data = buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, strategy, reportId, projectName });
+            const data = buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, strategy, fuseSizeA, existingLoadPct, electricityPrice, powerTariff, reportId, projectName });
             exportAsPdf(data);
           }}
         />
@@ -1556,6 +1576,7 @@ function Footer() {
 function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setCarId,
                         carAcLimit, setCarAcLimit, efficiency, setEfficiency,
                         sessionNeedKWh, setSessionNeedKWh, strategy,
+                        fuseSizeA, existingLoadPct, electricityPrice, powerTariff,
                         projectName, setProjectName, onExportPdf }) {
   const C = window.Amp5Calc;
   const [exporting, setExporting] = React.useState(false);
@@ -1570,10 +1591,33 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
         hwLimitKW: carAcLimit, efficiency, sessionNeedKWh, strategy,
         profileLabel: profile.label,
       });
-      return { scenario: s, energy: e, profile, rangeKm: C.rangeKm(e.perOutletKWh, car.kwh100) };
+      // Elnätet och driftkostnaden saknades HELT i jämförelseläget — det läge
+      // som finns för att välja mellan alternativ visade bara kWh och räckvidd.
+      // Servis och elpris är fastighetens, alltså gemensamma för scenarierna;
+      // det som skiljer är lasten de orsakar.
+      const grid = C.computeGridAssessment({
+        fuseSizeA, existingLoadPct, systemPeakKW: e.peakPowerKW,
+        capPerHub: s.capPerHub, installedHubs: e.hubs,
+      });
+      // INVESTERINGEN utelämnas medvetet: material och installation är
+      // klumpbelopp för hela projektet och går inte att fördela per scenario
+      // utan att gissa ett pris per hub. Driften går däremot att räkna exakt.
+      // Samma funktion som huvudläget, med investeringen nollad.
+      const ek = C.computeEconomics({
+        totalEnergyDay: e.totalEnergyDay, gridEnergyDay: e.totalEnergyFromGrid,
+        materialCost: 0, installationCost: 0, investmentGrant: 0,
+        electricityPrice, chargingFee: 0, powerTariff,
+        peakPowerKW: e.peakPowerKW, omPctYear: 0,
+        daysPerMonth: profile.daysPerMonth ?? 30,
+      });
+      return {
+        scenario: s, energy: e, profile, grid, ek,
+        rangeKm: C.rangeKm(e.perOutletKWh, car.kwh100),
+      };
     });
     return { computed: rows, maxKWh: Math.max(...rows.map((r) => r.energy.perOutletKWh), 1) };
-  }, [scenarios, carId, carAcLimit, efficiency, sessionNeedKWh]);
+  }, [scenarios, carId, carAcLimit, efficiency, sessionNeedKWh, strategy,
+      fuseSizeA, existingLoadPct, electricityPrice, powerTariff]);
 
   const updateScenario = (i, patch) => {
     setScenarios((arr) => arr.map((s, j) => (i === j ? { ...s, ...patch } : s)));
@@ -1680,6 +1724,8 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
             scenario={c.scenario}
             energy={c.energy}
             rangeKm={c.rangeKm}
+            grid={c.grid}
+            ek={c.ek}
             canRemove={scenarios.length > 1}
             onChange={(patch) => updateScenario(i, patch)}
             onRemove={() => removeScenario(i)}
@@ -1728,10 +1774,11 @@ function ComparisonStrip({ computed, maxKWh }) {
   );
 }
 
-function ScenarioCard({ color, scenario, energy, rangeKm, canRemove, onChange, onRemove }) {
+function ScenarioCard({ color, scenario, energy, rangeKm, grid, ek, canRemove, onChange, onRemove }) {
   const C = window.Amp5Calc;
   const s = scenario;
   const isLimited = energy.effectiveCap < energy.installedCap;
+  const GRID_TEXT = { ok: 'Räcker', marginal: 'Knapp marginal', upgrade: 'Servisutökning' };
 
   return (
     <div style={{
@@ -1823,6 +1870,23 @@ function ScenarioCard({ color, scenario, energy, rangeKm, canRemove, onChange, o
         {isLimited && <CardStat label="Effektiv" value={`${energy.effectiveCap} kW`} warn />}
         <CardStat label="Topp-effekt" value={`${C.fmt(energy.peakPowerKW, { digits: 0 })} kW`} />
         <CardStat label="Total energi/dygn" value={`${C.fmt(energy.totalEnergyDay, { digits: 0 })} kWh`} />
+
+        {/* Elnät och drift. Saknades helt i jämförelseläget, alltså i just det
+            läge som finns för att VÄLJA mellan alternativ. Investeringen är
+            utelämnad med flit — material och installation är klumpbelopp för
+            hela projektet och går inte att fördela per scenario. */}
+        {grid && (
+          <CardStat
+            label="Elnät"
+            value={`${GRID_TEXT[grid.status] || grid.status} · ${grid.surplusKW >= 0 ? '+' : ''}${C.fmt(grid.surplusKW, { digits: 0 })} kW`}
+            warn={grid.status !== 'ok'} />
+        )}
+        {ek && ek.monthlyEnergyCost > 0 && (
+          <CardStat label="Energikostnad/mån" value={`${C.fmt(ek.monthlyEnergyCost, { digits: 0 })} kr`} />
+        )}
+        {ek && ek.monthlyPowerCost > 0 && (
+          <CardStat label="Effektavgift/mån" value={`${C.fmt(ek.monthlyPowerCost, { digits: 0 })} kr`} />
+        )}
       </div>
     </div>
   );

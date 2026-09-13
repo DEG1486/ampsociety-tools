@@ -2,7 +2,6 @@
 // A4 portrait (210 × 297 mm). At 96dpi -> 794 × 1123 px.
 // Exposes window.PDFEditorial and window.PDFCompare,
 // each accepting a full `data` object with inputs, outputs and meta.
-// (PDFTechnical finns kvar i filen men exponeras ej på window.)
 
 /* global React */
 
@@ -637,243 +636,10 @@ function PDFEditorial({ data }) {
 }
 
 // --------------------------------------------------------------------------
-// Variant 2: Technical — denser, tabular, still premium-editorial
-// --------------------------------------------------------------------------
-
-function PDFTechnical({ data }) {
-  const Amp = window.Amp5Calc;
-  const primary = data.mode === 'energy'
-    ? { value: Math.round(data.outputs.perOutletKWh), unit: 'kWh', label: 'Energi per plats' }
-    : { value: data.outputs.hubs, unit: 'st', label: 'SmartHubs' };
-
-  const rangeKm = data.mode === 'energy'
-    ? Math.round((data.outputs.perOutletKWh / data.inputs.carKwh100) * 100)
-    : Math.round((data.outputs.actualEnergyPerOutlet / data.inputs.carKwh100) * 100);
-
-  const inputs = summarizeInputs(data);
-
-  return (
-    <>
-      {/* =========== PAGE 1 =========== */}
-      <Page id="tech-1">
-        {/* dark header band */}
-        <div style={{ background: BRAND.ink, color: '#fff', padding: '36px 56px 28px 56px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
-            <img src={window.Amp5Assets.logo} alt="AmpSociety"
-              style={{ display: 'block', height: 22, width: 'auto', filter: 'brightness(0) invert(1)' }} />
-            <div style={{ fontFamily: BRAND.mono, fontSize: 9, letterSpacing: 1, opacity: 0.6 }}>
-              DIMENSIONERINGSRAPPORT · {data.meta.date} · v{data.meta.version}
-            </div>
-          </div>
-
-          <Eyebrow color="rgba(255,255,255,.5)">{data.meta.projectName}</Eyebrow>
-          <div style={{ height: 10 }} />
-          <div style={{
-            fontFamily: BRAND.serif, fontSize: 44, fontWeight: 500,
-            lineHeight: 1.02, letterSpacing: -1, color: '#fff',
-          }}>
-            {data.mode === 'energy' ? 'Energianalys' : 'Dimensionering'}
-          </div>
-          <div style={{ height: 14 }} />
-          <Balk width={48} color={BRAND.accent} />
-        </div>
-
-        {/* Two-column result header */}
-        <div style={{ padding: '28px 56px 0 56px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32, borderBottom: `1px solid ${BRAND.line}`, paddingBottom: 24 }}>
-          <div>
-            <Eyebrow style={{ marginBottom: 10 }}>{primary.label}</Eyebrow>
-            <Num value={primary.value.toLocaleString('sv-SE')} unit={primary.unit} size={84} color={BRAND.ink} weight={500} />
-          </div>
-          <div>
-            <Eyebrow style={{ marginBottom: 10 }}>Räckvidd per plats</Eyebrow>
-            <Num value={rangeKm.toLocaleString('sv-SE')} unit="km" size={84} color={BRAND.accent} weight={500} />
-            <div style={{ fontSize: 10, color: BRAND.mute, fontFamily: BRAND.mono, marginTop: 6, letterSpacing: 0.6 }}>
-              {data.inputs.carName} · {Amp.fmt(data.inputs.carKwh100, { digits: 1 })} kWh/100 km
-            </div>
-          </div>
-        </div>
-
-        {/* Inputs table */}
-        <div style={{ padding: '28px 56px 0 56px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
-            <Balk width={20} color={BRAND.ink} height={3} style={{ position: 'relative', top: -4 }} />
-            <div style={{ fontFamily: BRAND.serif, fontSize: 18, fontWeight: 500 }}>Ingångsvärden</div>
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-            <tbody>
-              {inputs.map((row, i) => (
-                <tr key={i} style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
-                  <td style={{ padding: '10px 0', color: BRAND.mute, width: '50%', letterSpacing: 0.3 }}>{row.label}</td>
-                  <td style={{ padding: '10px 0', textAlign: 'right', fontFamily: BRAND.mono, color: BRAND.ink, fontWeight: 500 }}>
-                    {row.value}{row.unit && <span style={{ color: BRAND.mute, marginLeft: 4 }}>{row.unit}</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Chart — utgår i sin helhet om timserien saknas (se hasHourly) */}
-        {hasHourly(data.outputs.hourly) && (
-        <div style={{ padding: '24px 56px 0 56px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10 }}>
-            <Balk width={20} color={BRAND.ink} height={3} style={{ position: 'relative', top: -4 }} />
-            <div style={{ fontFamily: BRAND.serif, fontSize: 18, fontWeight: 500 }}>Effektuttag per timme</div>
-            <div style={{ fontFamily: BRAND.mono, fontSize: 9, color: BRAND.mute, letterSpacing: 0.8, marginLeft: 'auto' }}>
-              KW · PROFIL: {(data.inputs.profileLabel || '').toUpperCase()}
-            </div>
-          </div>
-          <PowerChart hourly={data.outputs.hourly} cap={data.outputs.effectiveCap} height={150} width={682} />
-        </div>
-        )}
-
-        {/* Output metrics grid */}
-        <div style={{ padding: '24px 56px 0 56px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0, borderTop: `1px solid ${BRAND.ink}`, borderBottom: `1px solid ${BRAND.line}` }}>
-            {[
-              { label: 'Installerad effekt', v: `${Math.round(data.outputs.installedCap)}`, u: 'kW' },
-              { label: 'Verklig kapacitet', v: `${Math.round(data.outputs.effectiveCap)}`, u: 'kW' },
-              // OBS: PDFTechnical RENDERAS ALDRIG (se filhuvudet — den exponeras
-              // inte på window, och exportAsPdf väljer PDFEditorial/PDFCompare).
-              // Rättat ändå, men inget här når en kund.
-              //
-              // Hette "Snitt per plats", men talet är medeleffekt per BELAGD
-              // plats (grid-kWh / belagda platstimmar). Skillnaden är 2,4–5,6×
-              // beroende på beläggning — vid 18 % beläggning 9,78 kW under en
-              // etikett som påstod 1,76. Skärmen döptes om i v3.8.3.
-              //
-              // Den gamla fallbacken (effectiveCap / outlets) var en TREDJE
-              // storhet — kapacitetstaket per uttag — och hade gett ett tal som
-              // varken stämde med etiketten eller med skärmen. Saknas värdet
-              // skrivs hellre ingenting.
-              { label: 'Medeleffekt / belagd plats',
-                v: data.outputs.avgPowerPerOutlet != null ? data.outputs.avgPowerPerOutlet.toFixed(1) : '–',
-                u: 'kW' },
-              { label: 'Aktiva uttag (snitt)', v: `${Math.round(data.outputs.activeOutlets)}`, u: 'st' },
-            ].map((m, i) => (
-              <div key={i} style={{ padding: '16px 14px', borderRight: i < 3 ? `1px solid ${BRAND.lineSoft}` : 'none' }}>
-                <div style={{ fontSize: 9, letterSpacing: 1.2, textTransform: 'uppercase', color: BRAND.mute, fontWeight: 700, marginBottom: 6 }}>{m.label}</div>
-                <div style={{ fontFamily: BRAND.serif, fontSize: 30, fontWeight: 500, letterSpacing: -0.5, lineHeight: 1 }}>
-                  {m.v}<span style={{ fontFamily: BRAND.sans, fontSize: 10, color: BRAND.mute, fontWeight: 400, marginLeft: 4, letterSpacing: 1, textTransform: 'uppercase' }}>{m.u}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <PDFFooter page={1} total={2} date={data.meta.date} version={data.meta.version} />
-      </Page>
-
-      {/* =========== PAGE 2 =========== */}
-      <Page id="tech-2">
-        {/* Hero image placeholder */}
-        <div style={{ margin: '48px 56px 0 56px', height: 150, background: BRAND.ink, position: 'relative', overflow: 'hidden' }}>
-          <div style={{ position: 'absolute', inset: 0, backgroundImage: 'radial-gradient(circle at 30% 40%, rgba(244,96,54,.2), transparent 55%)' }} />
-          <div style={{ padding: 16, fontSize: 9, letterSpacing: 1.5, fontFamily: BRAND.mono, textTransform: 'uppercase', color: 'rgba(255,255,255,.5)' }}>
-            Bildplats · SmartHub i installation
-          </div>
-        </div>
-
-        {/* Range strip */}
-        <div style={{ margin: '32px 56px 0 56px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
-            <Balk width={20} color={BRAND.ink} height={3} style={{ position: 'relative', top: -4 }} />
-            <div style={{ fontFamily: BRAND.serif, fontSize: 18, fontWeight: 500 }}>Räckvidd per plats</div>
-            <div style={{ fontFamily: BRAND.mono, fontSize: 9, color: BRAND.mute, letterSpacing: 0.8, marginLeft: 'auto' }}>
-              {rangeKm} km · {data.inputs.outlets} platser
-            </div>
-          </div>
-          <RangeStrip perOutletKm={rangeKm} outlets={data.inputs.outlets} width={682} height={52} />
-        </div>
-
-        {/* Scenarios / notes */}
-        <div style={{ margin: '32px 56px 0 56px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28, borderTop: `1px solid ${BRAND.line}`, paddingTop: 22 }}>
-          <div>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 10 }}>Beräkningsmetod</div>
-            <div style={{ fontSize: 10.5, lineHeight: 1.6, color: BRAND.ink2 }}>
-              Av bilarna som står på en plats en viss timme antas en andel
-              1/parkeringstiden ha anlänt just då. Ankomsterna faltas med
-              parkeringstidsfönstret, och kurvan skalas så att antalet
-              bilplatstimmar per dygn matchar vald topp-beläggning. Vid lång
-              parkeringstid blir närvarokurvans topp därför lägre än profilens —
-              en bil som står nio timmar kan inte ge en skarpare topp än så.
-              Effekten per aktiv bil är
-              enligt Amp5:s lastbalansering: startström i prioritetsordning tills
-              kapaciteten är förbrukad, resten köar, och inget fordon laddar under
-              6 A. Antalet bilar som laddar samtidigt är därför
-              <em> P<sub>eff</sub> / P<sub>start</sub></em>, inte alla närvarande.
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 10 }}>Systemkonstanter</div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10.5 }}>
-              <tbody>
-                <tr style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
-                  <td style={{ padding: '6px 0', color: BRAND.mute }}>Max simultan effekt / hub</td>
-                  <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: BRAND.mono }}>{data.const.capPerHub} kW</td>
-                </tr>
-                <tr style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
-                  <td style={{ padding: '6px 0', color: BRAND.mute }}>Uttag per SmartHub</td>
-                  <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: BRAND.mono }}>{data.const.outletsPerHub} st</td>
-                </tr>
-                {/* Handbokens precisionsregel: "54 uttag" får aldrig stå ensamt
-                    i externt material utan det här talet (granskningsfynd A4). */}
-                <tr style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
-                  <td style={{ padding: '6px 0', color: BRAND.mute }}>Simultana laddsessioner / hub</td>
-                  <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: BRAND.mono }}>{Amp.MAX_SESSIONS_PER_HUB} st</td>
-                </tr>
-                <tr style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
-                  <td style={{ padding: '6px 0', color: BRAND.mute }}>Lastbalansering</td>
-                  <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: BRAND.mono, fontSize: 9.5 }}>{data.const.strategy}</td>
-                </tr>
-                <tr style={{ borderBottom: `1px solid ${BRAND.lineSoft}` }}>
-                  <td style={{ padding: '6px 0', color: BRAND.mute }}>Profil</td>
-                  <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: BRAND.mono }}>{data.inputs.profileLabel}</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: '6px 0', color: BRAND.mute }}>Referensbil</td>
-                  <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: BRAND.mono }}>{data.inputs.carName}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* CTA + QR */}
-        <div style={{
-          margin: '32px 56px 0 56px',
-          background: BRAND.accentWash, padding: 24,
-          display: 'grid', gridTemplateColumns: '1fr 96px', gap: 20, alignItems: 'center',
-        }}>
-          <div>
-            <Eyebrow color={BRAND.accentDeep}>Gå vidare</Eyebrow>
-            <div style={{ height: 8 }} />
-            <div style={{ fontFamily: BRAND.serif, fontSize: 22, fontWeight: 500, letterSpacing: -0.3, lineHeight: 1.1, marginBottom: 8 }}>
-              Boka projektering med en specialist.
-            </div>
-            <div style={{ fontSize: 11, color: BRAND.ink2, lineHeight: 1.5, marginBottom: 10 }}>
-              Vi verifierar antagandena, utför faktisk elnätsanalys och
-              tar fram ett förslag som lever upp till er beläggning.
-            </div>
-            <div style={{ fontFamily: BRAND.mono, fontSize: 10, color: BRAND.ink }}>
-              {CONTACT_EMAIL}
-            </div>
-          </div>
-          <div>
-            <QRCode size={96} />
-            <div style={{ fontSize: 7.5, letterSpacing: 1, fontFamily: BRAND.mono, color: BRAND.accentDeep, textAlign: 'center', marginTop: 4, textTransform: 'uppercase', fontWeight: 700 }}>Kalkylator</div>
-          </div>
-        </div>
-
-        <PDFFooter page={2} total={2} date={data.meta.date} version={data.meta.version} />
-      </Page>
-    </>
-  );
-}
-
-// --------------------------------------------------------------------------
 // PDFCompare — side-by-side scenario comparison (single A4 page)
 // --------------------------------------------------------------------------
+
+const GRID_TEXT = { ok: 'Räcker', marginal: 'Knapp marginal', upgrade: 'Servisutökning' };
 
 function PDFCompare({ data }) {
   const Amp = window.Amp5Calc;
@@ -976,6 +742,28 @@ function PDFCompare({ data }) {
                 {isLimited && <PDFCompareRow k="Effektiv" v={`${out.effectiveCap} kW`} highlight={BRAND.accentDeep} />}
                 <PDFCompareRow k="Total/dygn" v={`${Amp.fmt(out.totalEnergyDay, { digits: 0 })} kWh`} />
               </div>
+
+              {/* Elnät och drift per scenario. Jämförelserapporten saknade båda
+                  — den visade bara kWh och räckvidd, alltså inte det som avgör
+                  valet. Investeringen ingår inte: material och installation är
+                  klumpbelopp för hela projektet och går inte att fördela per
+                  scenario utan att gissa ett pris per hub. */}
+              {(sc.grid || sc.ek) && (
+                <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${BRAND.lineSoft}` }}>
+                  {sc.grid && (
+                    <PDFCompareRow
+                      k="Elnät"
+                      v={`${GRID_TEXT[sc.grid.status] || sc.grid.status} · ${sc.grid.surplusKW >= 0 ? '+' : ''}${Amp.fmt(sc.grid.surplusKW, { digits: 0 })} kW`}
+                      highlight={sc.grid.status !== 'ok' ? BRAND.accentDeep : undefined} />
+                  )}
+                  {sc.ek && sc.ek.monthlyEnergyCost > 0 && (
+                    <PDFCompareRow k="Elkostnad/mån" v={`${Amp.fmt(sc.ek.monthlyEnergyCost, { digits: 0 })} kr`} />
+                  )}
+                  {sc.ek && sc.ek.monthlyPowerCost > 0 && (
+                    <PDFCompareRow k="Effektavgift/mån" v={`${Amp.fmt(sc.ek.monthlyPowerCost, { digits: 0 })} kr`} />
+                  )}
+                </div>
+              )}
 
               {/* Jämförelserapporten hade INGA varningar alls — pdfWarnings()
                   anropas bara av PDFEditorial. Ett scenario med lång
@@ -1279,7 +1067,5 @@ function sampleData() {
   };
 }
 
-// D2-fix: PDFTechnical är oanvänd i exportAsPdf — exponeras ej på window.
-// Komponenten finns kvar i filen om den ska aktiveras framöver.
 Object.assign(window, { PDFEditorial, PDFCompare, PDF_PAGE_W: PAGE_W, PDF_PAGE_H: PAGE_H, samplePDFData: sampleData });
 
