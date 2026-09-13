@@ -356,6 +356,15 @@ lagg('paritet', 'varningar finns i både skärm och rapport', () => {
     if (!reSkarm.test(VARIANT)) fel.push(`${namn}: saknas på skärmen`);
     if (!rePdf.test(PDF)) fel.push(`${namn}: saknas i kundrapporten`);
   }
+  // Friskrivningen ska finnas i BÅDA PDF-mallarna. PDFEditorial har haft den
+  // hela tiden; PDFCompare gick till kund med kWh, räckvidd, elnätsstatus och
+  // månadskostnader utan en rad om att talen är modellberäkningar eller att
+  // installationen kräver behörig elinstallatör (fynd 2026-09-13, hittat av
+  // matt-pdf.mjs på första körningen).
+  const editorial = PDF.slice(PDF.indexOf('function PDFEditorial'), PDF.indexOf('function PDFCompare'));
+  const compare = PDF.slice(PDF.indexOf('function PDFCompare'));
+  if (!/ELSÄK-FS/.test(editorial)) fel.push('friskrivningen saknas i PDFEditorial');
+  if (!/ELSÄK-FS/.test(compare)) fel.push('friskrivningen saknas i PDFCompare');
   return fel;
 });
 

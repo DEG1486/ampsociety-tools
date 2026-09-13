@@ -684,6 +684,10 @@ function PDFCompare({ data }) {
   const scenarios = data.scenarios || [];
   const maxKWh = Math.max(...scenarios.map((s) => s.outputs.perOutletKWh), 1);
   const profileLabelFor = (key) => (Amp.PROFILES[key]?.label || key);
+  // Fler än två kort gör sidan trång: korten växer, jämförelseremsan får fler
+  // rader och friskrivningen längst ned klipptes vid fyra scenarier (1129 px
+  // mot taket 1123). Bottenblocket komprimeras därför med antalet kort.
+  const tatt = scenarios.length > 2;
 
   return (
     <Page id="cmp-1">
@@ -880,10 +884,13 @@ function PDFCompare({ data }) {
       )}
 
       {/* Method + assumptions */}
-      <div style={{ margin: '24px 56px 0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28, borderTop: `1px solid ${BRAND.line}`, paddingTop: 18 }}>
+      {/* Bottenblocket komprimeras när korten blir många — med fyra scenarier
+          plus friskrivningen tog sidan slut vid 1129 px mot taket 1123.
+          Samma teknik som varningsremsan i PDFEditorial. */}
+      <div style={{ margin: tatt ? '16px 56px 0' : '24px 56px 0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: tatt ? 20 : 28, borderTop: `1px solid ${BRAND.line}`, paddingTop: tatt ? 12 : 18 }}>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 8 }}>Beräkningsmetod</div>
-          <div style={{ fontSize: 10, lineHeight: 1.55, color: BRAND.ink2 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: tatt ? 5 : 8 }}>Beräkningsmetod</div>
+          <div style={{ fontSize: tatt ? 9 : 10, lineHeight: tatt ? 1.4 : 1.55, color: BRAND.ink2 }}>
             Av bilarna som står på en plats en viss timme antas en andel
             1/parkeringstiden ha anlänt just då, faltat med parkeringstidsfönstret.
             Kurvan skalas så att antalet bilplatstimmar per dygn matchar vald
@@ -894,8 +901,8 @@ function PDFCompare({ data }) {
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 8 }}>Konstanter</div>
-          <div style={{ fontSize: 10, lineHeight: 1.55, color: BRAND.ink2 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: tatt ? 5 : 8 }}>Konstanter</div>
+          <div style={{ fontSize: tatt ? 9 : 10, lineHeight: tatt ? 1.4 : 1.55, color: BRAND.ink2 }}>
             SmartHub: {data.const.capPerHub} kW max simultan effekt, {data.const.outletsPerHub} uttag
             och {Amp.MAX_SESSIONS_PER_HUB} simultana laddsessioner per hub.
             Bilens AC-tak: {data.const.carAcLimit ?? Amp.HW_LIMIT_KW} kW.
@@ -906,6 +913,22 @@ function PDFCompare({ data }) {
             {' '}Räckvidd via verklig förbrukning med avdrag för fordonets
             laddförlust; vintertid 20–40 % högre åtgång.
           </div>
+        </div>
+      </div>
+
+      {/* Ansvar & risker. PDFEditorial har haft det här blocket hela tiden;
+          PDFCompare har gått till kund med kWh, räckvidd, elnätsstatus och
+          månadskostnader UTAN en rad om att talen är modellberäkningar eller
+          att installationen kräver behörig elinstallatör. Samma mönster som
+          resten av granskningen: en fix i den ena mallen, aldrig i den andra.
+          Komprimerad formulering — sidan är en enda och redan välfylld. */}
+      <div style={{ margin: tatt ? '10px 56px 0' : '14px 56px 0', paddingTop: tatt ? 7 : 10, borderTop: `1px solid ${BRAND.line}` }}>
+        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: tatt ? 4 : 6 }}>Ansvar &amp; risker</div>
+        <div style={{ fontSize: tatt ? 8.5 : 9.5, lineHeight: tatt ? 1.4 : 1.5, color: BRAND.ink2 }}>
+          Siffrorna är modellberäkningar på era indata och ersätter inte projektering
+          eller bindande offert från nätägaren. Verkligt utfall styrs av fordonsmix,
+          årstid och faktiskt laddbeteende. Priser exkl. moms; servisutökning ingår ej.
+          Installation ska utföras av behörig elinstallatör enligt ELSÄK-FS.
         </div>
       </div>
 
@@ -1141,7 +1164,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.9.1',
+      version: '3.9.2',
     },
   };
 }
