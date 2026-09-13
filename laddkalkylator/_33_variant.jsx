@@ -14,7 +14,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     projectName: projectName || '', // U2-fix: tom sträng = ej angivet; PDF visar ej default-strängen
     date: new Date().toLocaleDateString('sv-SE'),
     reportId,
-    version: '3.8.5',
+    version: '3.8.6',
   };
   const consts = {
     capPerHub, outletsPerHub: C.OUTLETS_PER_HUB,
@@ -94,8 +94,8 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
 }
 
 function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, strategy,
-                              fuseSizeA, existingLoadPct, electricityPrice, powerTariff,
-                              reportId, projectName }) {
+                              fuseSizeA, existingLoadPct, electricityPrice, chargingFee, powerTariff,
+                              activeDaysPerMonth, reportId, projectName }) {
   const C = window.Amp5Calc;
   const computed = scenarios.map((s) => {
     const profile = C.PROFILES[s.profileKey];
@@ -113,12 +113,19 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       fuseSizeA, existingLoadPct, systemPeakKW: e.peakPowerKW,
       capPerHub: s.capPerHub, installedHubs: e.hubs,
     });
+    // Laddavgiften MÅSTE med. Med chargingFee hårdkodad till 0 visade korten
+    // bara kostnad, och kostnaden växer med anläggningens storlek — det läge
+    // som finns för att VÄLJA mellan alternativ rangordnade dem alltså omvänt
+    // mot lönsamheten så fort en avgift var satt (granskningsfynd A1).
     const ek = C.computeEconomics({
       totalEnergyDay: e.totalEnergyDay, gridEnergyDay: e.totalEnergyFromGrid,
       materialCost: 0, installationCost: 0, investmentGrant: 0,
-      electricityPrice, chargingFee: 0, powerTariff,
+      electricityPrice, chargingFee, powerTariff,
       peakPowerKW: e.peakPowerKW, omPctYear: 0,
-      daysPerMonth: profile.daysPerMonth ?? 30,
+      // Samma dagräkning som huvudläget. Compare läste bara profilens default,
+      // så en säljare som satt 30 dgr/mån i Avancerat kunde få två
+      // månadskostnader för samma anläggning i samma möte (granskningsfynd M2).
+      daysPerMonth: activeDaysPerMonth ?? profile.daysPerMonth ?? 30,
     });
     return {
       name: s.name,
@@ -144,7 +151,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       projectName: projectName || '', // U2-fix: tom sträng = ej angivet
       date: new Date().toLocaleDateString('sv-SE'),
       reportId,
-      version: '3.8.5',
+      version: '3.8.6',
     },
   };
 }
@@ -617,10 +624,11 @@ function InstrumentVariant() {
           sessionNeedKWh={sessionNeedKWh} setSessionNeedKWh={setSessionNeedKWh}
           strategy={strategy}
           fuseSizeA={fuseSizeA} existingLoadPct={existingLoadPct}
-          electricityPrice={electricityPrice} powerTariff={powerTariff}
+          electricityPrice={electricityPrice} chargingFee={chargingFee} powerTariff={powerTariff}
+          activeDaysPerMonth={activeDaysPerMonth}
           projectName={projectName} setProjectName={setProjectName}
           onExportPdf={() => {
-            const data = buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, strategy, fuseSizeA, existingLoadPct, electricityPrice, powerTariff, reportId, projectName });
+            const data = buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNeedKWh, strategy, fuseSizeA, existingLoadPct, electricityPrice, chargingFee, powerTariff, activeDaysPerMonth, reportId, projectName });
             exportAsPdf(data);
           }}
         />
@@ -1331,7 +1339,13 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh1
     ['Befintlig last',                 `${C.fmt(existingKW, { digits: 0 })} kW`],
     ['Tillgänglig för laddning',       `${C.fmt(availableKW, { digits: 0 })} kW`],
     ['Överskott / underskott',         `${surplusKW >= 0 ? '+' : ''}${C.fmt(surplusKW, { digits: 0 })} kW`],
-    ['Marginal mot tillgänglig effekt', `${C.fmt((assessment.marginRatio || 0) * 100, { digits: 0 })} % (krav ${Math.round(C.GRID_MARGIN * 100)} %)`],
+    // Avrundas NEDÅT till en decimal. Statusen jämför exakt, så en marginal på
+    // 9,79 % skrevs tidigare ut som "10 % (krav 10 %)" under en orange rubrik
+    // som sa att kravet inte var uppfyllt — 304 fall i svepet över vanliga
+    // säkringsstorlekar (granskningsfynd A6). Nedåtavrundning är dessutom rätt
+    // riktning för en marginal: den får aldrig se större ut än den är.
+    ['Marginal mot tillgänglig effekt',
+      `${C.fmt(Math.floor((assessment.marginRatio || 0) * 1000) / 10, { digits: 1 })} % (krav ${Math.round(C.GRID_MARGIN * 100)} %)`],
     ...(perCarPeakKW != null ? [['Effekt per laddande bil vid topp', `${C.fmt(perCarLimitKW, { digits: 1 })} kW`]] : []),
     ...(present > 0.5 ? [['Vid topp: laddar / köar', `${C.fmt(charging, { digits: 0 })} / ${C.fmt(queued, { digits: 0 })} bilar`]] : []),
   ];
@@ -1356,7 +1370,13 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh1
             <span style={{ fontFamily: I.mono, color: I.ink, fontFeatureSettings: '"tnum"' }}>{v}</span>
           </div>
         ))}
-        {(status === 'upgrade' || status === 'marginal') && (
+        {/* upgradeCostLow > 0 är spärren PDF:en redan har. Utan den ritades
+            rutan även vid 'marginal', som per definition har positivt
+            överskott och därmed noll extra kW — resultatet blev "Indikativ
+            kostnad för servisutökning: 0 kkr–0 kkr" i samtliga marginalfall
+            (granskningsfynd A5). Räknemotorn villkorar redan på faktiskt
+            behov; det var bara skärmen som saknade motsvarigheten. */}
+        {(status === 'upgrade' || status === 'marginal') && upgradeCostLow > 0 && (
           <div style={{
             marginTop: 10, padding: '8px 12px',
             background: I.accentWash, borderLeft: `3px solid ${I.accent}`,
@@ -1469,21 +1489,36 @@ function EconomicsPanel({ economics }) {
             <span style={{ fontFamily: I.mono, color: I.ink, fontFeatureSettings: '"tnum"' }}>{v}</span>
           </div>
         ))}
-        {paybackYears != null && (
-          <div style={{
-            marginTop: 10, padding: '10px 14px',
-            background: I.forestWash, borderLeft: `3px solid ${I.forestSoft}`,
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          }}>
-            <span style={{ fontSize: 11, color: I.forest }}>Enkel återbetalningstid<br/>
-              <span style={{ fontSize: 9.5, opacity: 0.8 }}>odiskonterad · priser exkl. moms</span></span>
-            <span style={{ fontFamily: I.serif, fontSize: 24, fontWeight: 500, color: I.forest, letterSpacing: -0.5 }}>
-              {paybackYears < 1
-                ? `${Math.round(paybackMonths)} mån`
-                : `${C.fmt(paybackYears, { digits: 1 })} år`}
-            </span>
-          </div>
-        )}
+        {/* Grönt betyder "betalar sig inom den horisont vi räknar på". En
+            payback som överstiger LCC-horisonten är inte ett positivt besked:
+            rutan direkt nedanför visar då en NETTOFÖRLUST över samma tio år,
+            och en anläggning som betalar sig på 16 år har hunnit nå sin
+            tekniska livslängd innan dess. Utan den här gränsen renderades
+            5 742 år i exakt samma gröna ruta som 1,8 år (granskningsfynd A2). */}
+        {paybackYears != null && (() => {
+          const överHorisont = paybackYears > lccYears;
+          const färg = överHorisont ? I.accentDeep : I.forest;
+          return (
+            <div style={{
+              marginTop: 10, padding: '10px 14px',
+              background: överHorisont ? I.accentWash : I.forestWash,
+              borderLeft: `3px solid ${överHorisont ? I.accent : I.forestSoft}`,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+            }}>
+              <span style={{ fontSize: 11, color: färg }}>Enkel återbetalningstid<br/>
+                <span style={{ fontSize: 9.5, opacity: 0.8 }}>
+                  {överHorisont
+                    ? `längre än kalkylens ${lccYears} år — se livscykelkostnaden nedan`
+                    : 'odiskonterad · priser exkl. moms'}
+                </span></span>
+              <span style={{ fontFamily: I.serif, fontSize: 24, fontWeight: 500, color: färg, letterSpacing: -0.5, whiteSpace: 'nowrap' }}>
+                {paybackYears < 1
+                  ? `${Math.round(paybackMonths)} mån`
+                  : `${C.fmt(paybackYears, { digits: paybackYears >= 100 ? 0 : 1 })} år`}
+              </span>
+            </div>
+          );
+        })()}
         {paybackYears == null && (
           <div style={{ fontSize: 11, color: I.mute, fontStyle: 'italic', marginTop: 8, padding: '6px 0' }}>
             {hasRevenue
@@ -1567,6 +1602,9 @@ function Footer() {
       Effekten fördelas som i Amp5:s lastbalansering: startström i
       prioritetsordning tills kapaciteten är slut, resten köar — inget fordon
       laddar under 6 A, och en SmartHub kör max 30 simultana sessioner.
+      Ankomsterna räknas som en jämn ström. Verkliga ankomster är ojämnare, och
+      vid låg beläggning — när antalet närvarande bilar tidvis understiger det
+      antal som ryms på effekten — ger det något mindre energi än modellen visar.
       Vintertid räkna 20–40 % högre energiåtgång.
     </div>
   );
@@ -1576,8 +1614,8 @@ function Footer() {
 function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setCarId,
                         carAcLimit, setCarAcLimit, efficiency, setEfficiency,
                         sessionNeedKWh, setSessionNeedKWh, strategy,
-                        fuseSizeA, existingLoadPct, electricityPrice, powerTariff,
-                        projectName, setProjectName, onExportPdf }) {
+                        fuseSizeA, existingLoadPct, electricityPrice, chargingFee, powerTariff,
+                        activeDaysPerMonth, projectName, setProjectName, onExportPdf }) {
   const C = window.Amp5Calc;
   const [exporting, setExporting] = React.useState(false);
 
@@ -1603,12 +1641,19 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
       // klumpbelopp för hela projektet och går inte att fördela per scenario
       // utan att gissa ett pris per hub. Driften går däremot att räkna exakt.
       // Samma funktion som huvudläget, med investeringen nollad.
+      //
+      // Laddavgiften är däremot INTE ett medvetet bortval — den hårdkodades
+      // till 0, vilket lämnade korten med bara kostnad. Eftersom kostnaden
+      // växer med anläggningens storlek rangordnade jämförelseläget
+      // alternativen omvänt mot lönsamheten (granskningsfynd A1).
       const ek = C.computeEconomics({
         totalEnergyDay: e.totalEnergyDay, gridEnergyDay: e.totalEnergyFromGrid,
         materialCost: 0, installationCost: 0, investmentGrant: 0,
-        electricityPrice, chargingFee: 0, powerTariff,
+        electricityPrice, chargingFee, powerTariff,
         peakPowerKW: e.peakPowerKW, omPctYear: 0,
-        daysPerMonth: profile.daysPerMonth ?? 30,
+        // Samma dagräkning som huvudläget (granskningsfynd M2) — annars kunde
+        // skärmens två lägen visa månadskostnader 42,9 % isär för samma anläggning.
+        daysPerMonth: activeDaysPerMonth ?? profile.daysPerMonth ?? 30,
       });
       return {
         scenario: s, energy: e, profile, grid, ek,
@@ -1617,7 +1662,7 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
     });
     return { computed: rows, maxKWh: Math.max(...rows.map((r) => r.energy.perOutletKWh), 1) };
   }, [scenarios, carId, carAcLimit, efficiency, sessionNeedKWh, strategy,
-      fuseSizeA, existingLoadPct, electricityPrice, powerTariff]);
+      fuseSizeA, existingLoadPct, electricityPrice, chargingFee, powerTariff, activeDaysPerMonth]);
 
   const updateScenario = (i, patch) => {
     setScenarios((arr) => arr.map((s, j) => (i === j ? { ...s, ...patch } : s)));
@@ -1726,6 +1771,7 @@ function ComparePanel({ mode, setMode, scenarios, setScenarios, car, carId, setC
             rangeKm={c.rangeKm}
             grid={c.grid}
             ek={c.ek}
+            car={car}
             canRemove={scenarios.length > 1}
             onChange={(patch) => updateScenario(i, patch)}
             onRemove={() => removeScenario(i)}
@@ -1774,7 +1820,7 @@ function ComparisonStrip({ computed, maxKWh }) {
   );
 }
 
-function ScenarioCard({ color, scenario, energy, rangeKm, grid, ek, canRemove, onChange, onRemove }) {
+function ScenarioCard({ color, scenario, energy, rangeKm, grid, ek, car, canRemove, onChange, onRemove }) {
   const C = window.Amp5Calc;
   const s = scenario;
   const isLimited = energy.effectiveCap < energy.installedCap;
@@ -1886,6 +1932,48 @@ function ScenarioCard({ color, scenario, energy, rangeKm, grid, ek, canRemove, o
         )}
         {ek && ek.monthlyPowerCost > 0 && (
           <CardStat label="Effektavgift/mån" value={`${C.fmt(ek.monthlyPowerCost, { digits: 0 })} kr`} />
+        )}
+        {/* Driftnetto = laddintäkt − el − effektavgift. Investeringen ingår
+            inte (se ovan), så detta är inte ett resultat utan det överskott
+            driften ger. Utan den här raden rangordnade korten alternativen
+            efter kostnad, alltså omvänt mot lönsamheten. */}
+        {ek && ek.monthlyRevenue > 0 && (
+          <CardStat label="Laddintäkt/mån" value={`${C.fmt(ek.monthlyRevenue, { digits: 0 })} kr`} />
+        )}
+        {ek && ek.monthlyRevenue > 0 && (
+          <CardStat
+            label="Driftnetto/mån"
+            value={`${ek.monthlyNet >= 0 ? '+' : '−'}${C.fmt(Math.abs(ek.monthlyNet), { digits: 0 })} kr`}
+            warn={ek.monthlyNet < 0} />
+        )}
+
+        {/* Sessionstaket saknades i jämförelseläget medan huvudläget varnade
+            för exakt samma konfiguration — kodens eget standardscenario B
+            (50 uttag, köpcentrum, 85 %) utlöser det redan. */}
+        {(energy.sessionOverflowMax || 0) > 0.5 && (
+          <div style={{
+            marginTop: 8, padding: '6px 8px',
+            background: '#FFEBEE', borderLeft: `3px solid #C62828`,
+            fontSize: 10, color: '#5C1A16', lineHeight: 1.4,
+          }}>
+            ⚠️ {C.fmt(energy.sessionOverflowMax, { digits: 0 })} bilar utan laddsession
+            ({C.fmt(energy.maxPresent, { digits: 0 })} närvarande mot taket {energy.sessionCapacity}).
+            Kräver {energy.hubsNeededForSessions > 1
+              ? `${energy.hubsNeededForSessions} SmartHubs till`
+              : 'en SmartHub till'}.
+          </div>
+        )}
+        {/* Batterivarningen fanns i PDFCompare men inte här — säljaren såg
+            1 245 km på skärmen och upptäckte problemet först vid export. */}
+        {car && car.battery > 0 && energy.perOutletKWh > car.battery && (
+          <div style={{
+            marginTop: 8, padding: '6px 8px',
+            background: I.accentWash, borderLeft: `3px solid ${I.accent}`,
+            fontSize: 10, color: I.ink2, lineHeight: 1.4,
+          }}>
+            ⚠️ Över {car.name}s batteri ({C.fmt(car.battery, { digits: 0 })} kWh).
+            Bilen kan inte ta emot hela mängden — ange energibehov per bil.
+          </div>
         )}
       </div>
     </div>
@@ -2289,7 +2377,14 @@ function StatList({ mode, energy, sizing, chartEnergy }) {
     ['Laddningar / uttag·dygn', fmtSessions(eng.sessionsPerOutletPerDay)],
     ['Totalt laddningar / dygn', fmtSessions(eng.totalSessionsPerDay)],
     ['kWh / uttag·dygn',        `${C.fmt(eng.kwhPerOutletPerDay, { digits: 1 })} kWh`],
-    ['Faktisk kWh / uttag',
+    // actualEnergyPerOutlet är ett KAPACITETSTAK — vad anläggningen skulle
+    // kunna leverera per laddtillfälle, inte vad bilen får. Etiketten
+    // "Faktisk kWh / uttag" påstod precis det fältet inte får påstå
+    // (granskningsfynd G1, återfallet A4): vid uppnått mål stod det 50,2 kWh
+    // medan hjälterutan och PDF:en sa 30,0 kWh levererat. De två talen står nu
+    // bredvid varandra med var sin ärlig etikett, så de inte kan förväxlas.
+    ['Levererat / laddtillfälle', `${C.fmt(sizing.deliveredEnergyPerOutlet, { digits: 1 })} kWh`],
+    ['Kapacitetstak / laddtillfälle',
       sizing.achievesTarget
         ? `${C.fmt(sizing.actualEnergyPerOutlet, { digits: 1 })} kWh · +${C.fmt(sizing.headroomKWh, { digits: 1 })} marginal`
         : `${C.fmt(sizing.actualEnergyPerOutlet, { digits: 1 })} kWh · −${C.fmt(sizing.shortfallKWh, { digits: 1 })} under mål`,

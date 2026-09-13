@@ -396,6 +396,27 @@
         const podBusy = outlets > 0 ? Math.min(1, present / outlets) : 0;
         const hwEff = hwLimit > 11 ? hwLimit - (hwLimit - 11) * podBusy : hwLimit;
 
+        // MEDELFÄLTSANTAGANDE — dokumenterat, inte ett fel, men det har en
+        // riktning. Vi räknar allocatePower på VÄNTEVÄRDET av antalet bilar
+        // som vill ladda, dvs min(platser, E[n]). Verkligheten ger
+        // E[min(platser, n)], och min() är konkav — Jensens olikhet säger då
+        // att modellen ALDRIG underskattar och ibland överskattar.
+        //
+        // Storleken går att räkna ut exakt. Med n ~ Poisson och 44 kW som
+        // rymmer fyra bilar à 11 kW:
+        //   E[n] =  4,5  ->  85,3 % av modellens tal   (25 uttag, 18 % belägg.)
+        //   E[n] =  6,6  ->  96,2 %
+        //   E[n] = 18,3  -> 100,0 %
+        // Felet är alltså noll när anläggningen har gott om bilar och som
+        // störst när medelantalet närvarande ligger nära antalet som ryms på
+        // effekten — samma lågbeläggningsfall som ger de orimligt stora
+        // sessionerna. De två skevheterna pekar åt samma håll.
+        //
+        // Att byta till en stokastisk ankomstmodell vore att välja Poisson
+        // framför jämn ström: ett NYTT antagande, inte ett borttaget. Verkliga
+        // ankomster ligger mellan de två (kontorstider är delvis schemalagda).
+        // Antagandet redovisas därför i modelltexten på skärmen och i båda
+        // PDF-mallarna i stället för att döljas i koden.
         const alloc = allocatePower(cap, wanting, hwEff, startKW, minChargeKW, slotCap);
         perCar = alloc.perCar; charging = alloc.charging;
         if (charging > 0) {

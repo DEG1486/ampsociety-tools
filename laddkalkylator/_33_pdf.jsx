@@ -608,6 +608,8 @@ function PDFEditorial({ data }) {
               timmar kan inte ge en skarpare topp än så. Effekten fördelas som i Amp5:s lastbalansering
               ({data.const.strategy}): startström i prioritetsordning tills
               kapaciteten är slut, resten köar — inget fordon laddar under 6 A.
+              Ankomsterna räknas som en jämn ström; ojämnare ankomster ger något
+              mindre energi vid låg beläggning.
               {data.mode === 'energy' && data.inputs.sessionNeedKWh > 0
                 ? <> Varje bil antas behöva högst {data.inputs.sessionNeedKWh} kWh per laddtillfälle.</>
                 : null}
@@ -762,6 +764,33 @@ function PDFCompare({ data }) {
                   {sc.ek && sc.ek.monthlyPowerCost > 0 && (
                     <PDFCompareRow k="Effektavgift/mån" v={`${Amp.fmt(sc.ek.monthlyPowerCost, { digits: 0 })} kr`} />
                   )}
+                  {/* Laddintäkt och driftnetto. Utan dem visade korten bara
+                      kostnad, som växer med anläggningens storlek — rapporten
+                      rangordnade alltså alternativen omvänt mot lönsamheten. */}
+                  {sc.ek && sc.ek.monthlyRevenue > 0 && (
+                    <PDFCompareRow k="Laddintäkt/mån" v={`${Amp.fmt(sc.ek.monthlyRevenue, { digits: 0 })} kr`} />
+                  )}
+                  {sc.ek && sc.ek.monthlyRevenue > 0 && (
+                    <PDFCompareRow
+                      k="Driftnetto/mån"
+                      v={`${sc.ek.monthlyNet >= 0 ? '+' : '−'}${Amp.fmt(Math.abs(sc.ek.monthlyNet), { digits: 0 })} kr`}
+                      highlight={sc.ek.monthlyNet < 0 ? BRAND.accentDeep : undefined} />
+                  )}
+                </div>
+              )}
+
+              {/* Sessionstaket: PDFEditorial varnar, PDFCompare gjorde det inte.
+                  Rapportens eget standardscenario utlöser det redan. */}
+              {(out.sessionOverflowMax || 0) > 0.5 && (
+                <div style={{
+                  marginTop: 8, padding: '6px 7px',
+                  background: BRAND.accentWash,
+                  borderLeft: `2px solid ${BRAND.accent}`,
+                  fontSize: 7.5, lineHeight: 1.35, color: BRAND.ink2,
+                }}>
+                  ⚠ {Amp.fmt(out.sessionOverflowMax, { digits: 0 })} bilar utan laddsession
+                  ({Amp.fmt(out.maxPresent, { digits: 0 })} närvarande mot taket {out.sessionCapacity}).
+                  En SmartHub kör max {Amp.MAX_SESSIONS_PER_HUB} simultana sessioner.
                 </div>
               )}
 
@@ -825,7 +854,8 @@ function PDFCompare({ data }) {
             Kurvan skalas så att antalet bilplatstimmar per dygn matchar vald
             topp-beläggning. Effekten per aktiv bil är
             startström i prioritetsordning tills kapaciteten är förbrukad; resten
-            köar. Inget fordon laddar under 6 A.
+            köar. Inget fordon laddar under 6 A. Ankomsterna räknas som en jämn
+            ström; ojämnare ankomster ger något mindre energi vid låg beläggning.
           </div>
         </div>
         <div>
@@ -1062,7 +1092,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.8.5',
+      version: '3.8.6',
     },
   };
 }
