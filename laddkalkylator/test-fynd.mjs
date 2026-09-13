@@ -248,6 +248,34 @@ lagg('L7/L8', 'API:t: en källa för marginalen, ingen död export', () => {
   return fel;
 });
 
+lagg('NY-1', 'elnät och ekonomi tål skräp ur URL-hashen', () => {
+  const fel = [];
+  // Fynd 2026-09-13 (fuzz genom hela kedjan): computeEnergy hade robusthets-
+  // filtret, de andra två hade det inte. fuseSizeA = NaN gav NaN i serviseffekt,
+  // tillgänglig effekt och överskott — men status 'marginal', alltså ett
+  // självsäkert "knappt tillräcklig kapacitet" utan ett giltigt tal bakom sig.
+  // Fälten kommer ur loadInitialCalcState, som avkodar godtycklig JSON.
+  const skrap = [undefined, null, NaN, Infinity, -Infinity, '12', true, -1];
+  const gBas = { fuseSizeA: 63, existingLoadPct: 0.2, systemPeakKW: 30, capPerHub: 44, installedHubs: 1, installedCapKW: 44 };
+  for (const f of Object.keys(gBas)) for (const v of skrap) {
+    const r = C.computeGridAssessment({ ...gBas, [f]: v });
+    for (const k of ['servisKW', 'availableKW', 'surplusKW', 'extraNeeded', 'marginRatio', 'dimensionerandeKW', 'surplusVsPeakKW'])
+      if (!Number.isFinite(r[k])) fel.push(`grid.${k} = ${r[k]} vid ${f}=${String(v)}`);
+    if (!['ok', 'marginal', 'upgrade'].includes(r.status)) fel.push(`okänd status vid ${f}=${String(v)}`);
+  }
+  const eBas = { materialCost: 250000, installationCost: 150000, electricityPrice: 2.5, chargingFee: 3.5,
+    totalEnergyDay: 800, gridEnergyDay: 842, powerTariff: 60, peakPowerKW: 44, omPctYear: 0.03,
+    daysPerMonth: 21, investmentGrant: 0 };
+  for (const f of Object.keys(eBas)) for (const v of skrap) {
+    const r = C.computeEconomics({ ...eBas, [f]: v });
+    for (const k of ['capitalCost', 'netCapitalCost', 'monthlyEnergyCost', 'monthlyPowerCost', 'monthlyOmCost', 'monthlyRevenue', 'monthlyNet', 'lccTotal', 'lccNet'])
+      if (!Number.isFinite(r[k])) fel.push(`ekonomi.${k} = ${r[k]} vid ${f}=${String(v)}`);
+    if (r.paybackYears != null && !Number.isFinite(r.paybackYears)) fel.push(`payback = ${r.paybackYears} vid ${f}=${String(v)}`);
+    if (r.lcoe != null && !Number.isFinite(r.lcoe)) fel.push(`LCoE = ${r.lcoe} vid ${f}=${String(v)}`);
+  }
+  return fel.slice(0, 6);
+});
+
 // =========================================================================
 // PRESENTATIONSFYND — den klass invariantsviten inte kan se
 // =========================================================================

@@ -914,10 +914,18 @@
   //     SmartHubs den TILLGÄNGLIGA effekten rymmer. Utan det kan UI:t råda
   //     "fler SmartHubs" i ett läge där elnätet inte tar en enda till.
   function computeGridAssessment({ fuseSizeA, existingLoadPct, systemPeakKW, capPerHub, installedHubs, installedCapKW }) {
-    const fuse = Math.max(1, fuseSizeA != null ? fuseSizeA : 0);
+    // Samma robusthetsfilter som computeEnergy har. Tillståndet kan komma från
+    // en handredigerad eller trunkerad URL-hash, och fälten gick tidigare in
+    // oskyddade: fuseSizeA = NaN gav NaN i serviseffekt, tillgänglig effekt och
+    // överskott — men status 'marginal', alltså ett självsäkert
+    // "knappt tillräcklig kapacitet" utan ett enda giltigt tal bakom sig.
+    // Icke-finita tal renderas som "–", så raderna såg tomma ut medan
+    // STATUSRUBRIKEN lät som ett utlåtande.
+    const num = (v, d) => (Number.isFinite(v) ? v : d);
+    const fuse = Math.max(1, num(fuseSizeA, 0));
     // P = √3 × 400 V × I
     const servisKW = (Math.sqrt(3) * 400 * fuse) / 1000;
-    const existingKW = servisKW * Math.max(0, Math.min(0.99, existingLoadPct ?? 0));
+    const existingKW = servisKW * Math.max(0, Math.min(0.99, num(existingLoadPct, 0)));
     const availableKW = servisKW - existingKW;
 
     // DIMENSIONERANDE LAST (granskningsfynd B1).
@@ -936,18 +944,19 @@
     // Utelämnas installedCapKW faller allt tillbaka på det gamla beteendet, så
     // äldre anropare påverkas inte.
     const installedKW = (Number.isFinite(installedCapKW) && installedCapKW > 0) ? installedCapKW : null;
-    const dimensionerandeKW = Math.max(systemPeakKW || 0, installedKW || 0);
+    const peakKW = Math.max(0, num(systemPeakKW, 0));
+    const dimensionerandeKW = Math.max(peakKW, installedKW || 0);
     const surplusKW = availableKW - dimensionerandeKW;
     // Överskottet mot enbart den modellerade lasten — svarar på "räcker elnätet
     // för det antagna laddbehovet?", vilket är en annan fråga än om
     // installationens märkeffekt ryms.
-    const surplusVsPeakKW = availableKW - (systemPeakKW || 0);
+    const surplusVsPeakKW = availableKW - peakKW;
     // Binder installationens märkeffekt i stället för den modellerade toppen?
     // Då är åtgärden inte nödvändigtvis servisutökning: ett statiskt
     // fastighetseffekttak eller dynamisk lastbalansering (ALM, handbok 8.2 —
     // kräver extern energimätare) begränsar anläggningen mot servisen i stället.
-    const limitedByInstalled = installedKW != null && installedKW > (systemPeakKW || 0) + 1e-9;
-    const coverageRatio = systemPeakKW > 0 ? availableKW / systemPeakKW : Infinity;
+    const limitedByInstalled = installedKW != null && installedKW > peakKW + 1e-9;
+    const coverageRatio = peakKW > 0 ? availableKW / peakKW : Infinity;
     // Marginalband: en servis som körs på sitt märkvärde är inte "OK". Kräver
     // minst 10 % ledig kapacitet kvar efter laddningen för grön status —
     // tidigare gav 0,1 % marginal grönt ljus (granskningsfynd C4).
@@ -1026,25 +1035,30 @@
   //                      räknas fortsatt på bruttokapitalet (utrustningen
   //                      kostar lika mycket att underhålla oavsett stöd).
   function computeEconomics({ materialCost, installationCost, electricityPrice, chargingFee, totalEnergyDay, gridEnergyDay, powerTariff, peakPowerKW, omPctYear, daysPerMonth, investmentGrant }) {
-    const material           = materialCost || 0;
-    const installation       = installationCost || 0;
+    // Samma robusthetsfilter som computeEnergy och computeGridAssessment.
+    // chargingFee = Infinity eller peakPowerKW = Infinity ur en trasig
+    // delningslänk gav tidigare monthlyNet = ±Infinity och en payback som inte
+    // gick att tolka. Alla fält defaultas i stället till noll.
+    const tal = (v, d = 0) => (Number.isFinite(v) ? v : d);
+    const material           = tal(materialCost);
+    const installation       = tal(installationCost);
     const capitalCost        = material + installation;
-    const grant              = Math.max(0, Math.min(investmentGrant || 0, capitalCost));
+    const grant              = Math.max(0, Math.min(tal(investmentGrant), capitalCost));
     const netCapitalCost     = capitalCost - grant;
     // Dagar-fix: typdygnet × 30 överskattade kontorssegmentet ~30-40 % —
     // helger/semestrar har nära noll laddning. Profilen styr via daysPerMonth.
     const days               = (Number.isFinite(daysPerMonth) && daysPerMonth > 0) ? daysPerMonth : 30;
-    const monthlyEnergyKWh   = (totalEnergyDay || 0) * days;
+    const monthlyEnergyKWh   = Math.max(0, tal(totalEnergyDay)) * days;
     // η-fix: elen köps grid-side FÖRE förlusterna — kostnaden räknas på inköpt
     // volym, intäkten på levererad (uttagsmätt). Med samma bas för båda
     // underskattades kostnaden ~5 % och paybacken blev systematiskt för kort.
-    const monthlyPurchasedKWh = ((gridEnergyDay != null && gridEnergyDay > 0) ? gridEnergyDay : (totalEnergyDay || 0)) * days;
-    const monthlyEnergyCost  = monthlyPurchasedKWh * (electricityPrice || 0);
-    const monthlyPowerCost   = (peakPowerKW || 0) * (powerTariff || 0);
+    const monthlyPurchasedKWh = (Number.isFinite(gridEnergyDay) && gridEnergyDay > 0 ? gridEnergyDay : Math.max(0, tal(totalEnergyDay))) * days;
+    const monthlyEnergyCost  = monthlyPurchasedKWh * Math.max(0, tal(electricityPrice));
+    const monthlyPowerCost   = Math.max(0, tal(peakPowerKW)) * Math.max(0, tal(powerTariff));
     const monthlyOpCost      = monthlyEnergyCost + monthlyPowerCost;
-    const monthlyRevenue     = monthlyEnergyKWh * (chargingFee || 0);
+    const monthlyRevenue     = monthlyEnergyKWh * Math.max(0, tal(chargingFee));
     // O&M som månadssnitt — typiskt 2-4% av kapital/år (default 3%)
-    const monthlyOmCost      = capitalCost * (Number.isFinite(omPctYear) ? omPctYear : 0.03) / 12;
+    const monthlyOmCost      = capitalCost * Math.max(0, tal(omPctYear, 0.03)) / 12;
     const monthlyNet         = monthlyRevenue - monthlyOpCost - monthlyOmCost;
     // capitalCost > 0: utan investering finns ingen meningsfull återbetalningstid (undvik "0 mån").
     // Payback på NETTOkapitalet (efter ev. investeringsstöd).
@@ -1087,9 +1101,9 @@
       // i rapporten men satsen bakom dem gick inte att härleda, och D&U räknas
       // dessutom på BRUTTOkapitalet även när investeringsstöd dragits av — ett
       // medvetet val som bara stod i koden (granskningsfynd M7).
-      electricityPrice: electricityPrice || 0, chargingFee: chargingFee || 0,
-      powerTariff: powerTariff || 0, tariffPeakKW: peakPowerKW || 0,
-      omPctYear: Number.isFinite(omPctYear) ? omPctYear : 0.03,
+      electricityPrice: Math.max(0, tal(electricityPrice)), chargingFee: Math.max(0, tal(chargingFee)),
+      powerTariff: Math.max(0, tal(powerTariff)), tariffPeakKW: Math.max(0, tal(peakPowerKW)),
+      omPctYear: Math.max(0, tal(omPctYear, 0.03)),
       // Bakåtkomp — behåll äldre fältnamn som alias så PDF/övrig kod inte bryts
       hubCapital: material, outletCapital: installation,
       daysPerMonth: days,
