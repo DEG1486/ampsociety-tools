@@ -46,6 +46,24 @@ if ($screenPattern.Matches($html).Count -ne 1) {
 $html = $screenPattern.Replace($html, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $screen }, 1)
 $html = $html.Replace('<html>', '<html lang="sv">').Replace('<meta charset="utf-8">', '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">')
 
+# Google Fonts-preconnect ur bundler-exporten. Taggarna ar FUNKTIONSLOSA -
+# alla typsnitt ar inbaddade och ingen CSS-regel pekar pa Google - men preconnect
+# oppnar en TCP/TLS-anslutning vid sidladdning, vilket rojer besokarens IP for
+# Google utan att nagot hamtas darifran. I ett publikt verktyg som skickas till
+# kund hor det inte hemma. (CLAUDE.md pastod att de togs bort i v3.8.1; de satt
+# kvar i mallen fram till 2026-09-13.)
+# OBS: taggarna sitter i <script type="__bundler/template">, alltså som ESCAPED
+# JSON — i filen står \" och \n som literala tecken, inte som citat och radbrytning.
+# En vanlig regex mot <link rel="preconnect" ...> matchar därför ALDRIG. Literal
+# .Replace() mot den escapade formen är både enklare och säkrare här.
+$pre1 = '\n<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">'
+$pre2 = '\n<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin=\"\">'
+if ($html.Contains($pre1)) { $html = $html.Replace($pre1, '') }
+if ($html.Contains($pre2)) { $html = $html.Replace($pre2, '') }
+if ($html -match 'fonts\.(googleapis|gstatic)\.com') {
+    throw 'Google Fonts-referenser kvar i mallen — monstren traffade inte.'
+}
+
 # Titeln kommer fran bundler-exporten och bar dar en HARDKODAD version
 # ("Amp5 Laddkalkylator - Instrument v3.7") - en fjarde plats dar versionen kan
 # bli gammal utan att nagon marker det. Den sattes tidigare for hand efter
