@@ -2108,6 +2108,11 @@ function HourlyChart({ energy }) {
   const demand = energy.hourlyDemand || energy.hourly;
   const yMax = Math.max(energy.peakDemandKW, cap, 1) * 1.05;
   const capPct = (cap / yMax) * 100;
+  // Efterfrågestapeln ritas RÖD bara när den kapas, annars grå — men legenden
+  // visade alltid rött. I en anläggning med marginal (alltså den vanliga) stod
+  // det en röd ruta i förklaringen till staplar som är grå.
+  const harKapat = energy.hourly.some((d, i) => (demand[i] ?? 0) > d + 0.01);
+  const demandFarg = harKapat ? 'rgba(239,83,80,0.55)' : 'rgba(39,33,32,0.30)';
 
   return (
     <div style={{ background: I.surface, border: `1px solid ${I.line}`, borderRadius: 2, padding: '16px 20px 8px' }}>
@@ -2148,12 +2153,22 @@ function HourlyChart({ energy }) {
           );
         })}
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontFamily: I.mono, fontSize: 10, color: I.mute, letterSpacing: .5 }}>
-        <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
+      {/* Etiketterna låg i en space-between-rad: "00" vid vänsterkanten och
+          "24" vid högerkanten, medan stapel i har sitt centrum vid (i+0,5)/24.
+          Timmarna hamnade därför en halv stapelbredd fel, och "24" pekade på en
+          timme som inte finns (serien är 0–23). Nu delar etiketterna samma
+          flex-grid som staplarna, så varje etikett står under sin egen stapel —
+          samma timmar som PDF:ens PowerChart använder. */}
+      <div style={{ display: 'flex', gap: 3, marginTop: 8, fontFamily: I.mono, fontSize: 10, color: I.mute, letterSpacing: .5 }}>
+        {energy.hourly.map((_, i) => (
+          <div key={i} style={{ flex: 1, textAlign: 'center' }}>
+            {[0, 6, 12, 18, 23].includes(i) ? String(i).padStart(2, '0') : ''}
+          </div>
+        ))}
       </div>
       <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 10, color: I.mute, flexWrap: 'wrap' }}>
         <LegendSwatch color={I.ink} label="SmartHub levererat" />
-        <LegendSwatch color="rgba(239,83,80,0.55)" label="Okontrollerad efterfrågan" />
+        <LegendSwatch color={demandFarg} label={harKapat ? 'Okontrollerad efterfrågan (kapas)' : 'Okontrollerad efterfrågan'} />
         <LegendSwatch color={I.accent} dashed label="Hub-tak" />
       </div>
     </div>

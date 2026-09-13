@@ -269,13 +269,24 @@ function PowerChart({ hourly, cap, height = 140, width = 682, theme = 'light' })
 // får olika mycket. Bildtexten måste säga det (granskningsfynd A3).
 // Höjden kodar räckvidden mot en fast referens så grafiken är jämförbar
 // mellan rapporter.
+// Skalan och synlighetsgolvet ligger på modulnivå så att bildtexten kan härleda
+// sina tal ur samma konstanter i stället för att upprepa dem.
+//
+// Golvet var tidigare 8 PIXLAR, vilket gjorde avkortningströskeln beroende av
+// stapelhöjden: 53 km vid height=60 men 61 km vid height=52. Bildtexten kunde
+// bara stämma för en av dem, och gjorde det bara för att den råkade sitta hos
+// rätt anrop. Som ANDEL av höjden blir tröskeln densamma oavsett höjd.
+// 8/60 är den gamla andelen vid standardhöjden, så utseendet är oförändrat.
+const RANGE_REF_KM = 400;              // fast skala 0–400 km
+const RANGE_MIN_FRAC = 8 / 60;         // synlighetsgolv som andel av höjden
+const RANGE_FLOOR_KM = Math.round(RANGE_REF_KM * RANGE_MIN_FRAC); // 53
+
 function RangeStrip({ perOutletKm, outlets, width = 682, height = 60 }) {
   const N = Math.min(outlets, 80);
   const gap = 4;
   const dot = (width - gap * (N - 1)) / N;
-  const REF_KM = 400; // fast skala 0–400 km
-  const frac = Math.max(0.08, Math.min(1, perOutletKm / REF_KM));
-  const h = Math.max(8, height * frac);
+  const frac = Math.max(RANGE_MIN_FRAC, Math.min(1, perOutletKm / RANGE_REF_KM));
+  const h = height * frac;
   return (
     <div style={{ width }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height }}>
@@ -516,7 +527,7 @@ function PDFEditorial({ data }) {
           <div style={{ fontSize: 10, color: BRAND.mute, fontFamily: BRAND.mono, letterSpacing: 0.6, textTransform: 'uppercase' }}>
             En stapel = en plats. Staplarna visar modellens genomsnitt per plats, inte
             enskilda bilar — faktisk fördelning styrs av lastbalanseringens prioritetsordning.
-            Höjden är avkortad under 53 km och över 400 km; läs värdet i siffran ovan.
+            Höjden är avkortad under {RANGE_FLOOR_KM} km och över {RANGE_REF_KM} km; läs värdet i siffran ovan.
           </div>
         </div>
 
