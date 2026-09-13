@@ -74,7 +74,12 @@ const FALL = [
     ] }],
 ];
 
-const SOND = `
+// String.raw, inte en vanlig template literal: sonden innehåller reguljära
+// uttryck, och i en vanlig template literal äts varje backslash innan koden ens
+// når webbläsaren — \d blir d och \s blir s, så uttrycket matchar tyst
+// ingenting. Statusregexerna nedan har inga escapes och fungerade därför direkt,
+// vilket gjorde felet lätt att missa. ${...} fungerar likadant i String.raw.
+const SOND = String.raw`
 <script>
 (async function () {
   const vanta = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -82,6 +87,21 @@ const SOND = `
   const ut = [];
   try {
     await vanta(8000);                       // startskärmen håller appen i 2,5 s
+
+    // PARITET: samma tillstånd ska ge samma besked på skärmen och i rapporten.
+    // Projektets vanligaste felklass — rätt beräkning, men skärmen och
+    // kundrapporten visade olika tal (G1: 346 km mot 186 km) eller olika status
+    // (G7). Ordalydelsen skiljer medvetet; STATUSKLASSEN får inte göra det.
+    const skarmText = document.body.innerText;
+    const klass = (t) => (/OK: elnätet|Elnät: OK/.test(t) ? 'ok'
+      : /Marginellt|Elnät: Marginellt/.test(t) ? 'marginal'
+      : /Servisutökning krävs|Utökning krävs/.test(t) ? 'upgrade' : null);
+    // Negativ lookbehind pa '/': talet i enheten "kWh/100 km" ar inte en
+    // rackvidd, och slapptes annars igenom och gav falska paritetsfel.
+    const kmVarden = (t) => [...new Set((t.match(/(?<![\/\d])(\d[\d\s ]{0,8})km/g) || [])
+      .map((x) => parseInt(x.replace(/[^\d]/g, ''), 10))
+      .filter((n) => n > 20 && n < 5000))].sort((a, b) => b - a);
+
     window.print = function () {};           // aldrig skriva ut på riktigt
     const knapp = [...document.querySelectorAll('button')].find((b) => /Spara som PDF/.test(txt(b)));
     if (!knapp) throw new Error('hittade ingen exportknapp');
@@ -103,7 +123,12 @@ const SOND = `
       ut.push({ sida: sida.id, scrollHeight: sida.scrollHeight, clientHeight: sida.clientHeight,
                 lagst: Math.round(lagst * 10) / 10, klippta, lagstText });
     }
-    ut.push({ friskrivning: text.indexOf('ELSÄK-FS') >= 0, varningar: (text.match(/⚠/g) || []).length });
+    ut.push({
+      friskrivning: text.indexOf('ELSÄK-FS') >= 0,
+      varningar: (text.match(/⚠/g) || []).length,
+      skarmStatus: klass(skarmText), pdfStatus: klass(text),
+      skarmKm: kmVarden(skarmText), pdfKm: kmVarden(text),
+    });
   } catch (e) {
     ut.push({ fel: e && e.message });
   }
@@ -145,16 +170,25 @@ for (const [namn, tillstand] of FALL) {
   const meta = rad.find((x) => x.friskrivning !== undefined) || {};
   const sidor = rad.filter((x) => x.sida);
   const brott = sidor.filter((s) => s.klippta > 0 || s.scrollHeight !== s.clientHeight);
+  const paritetsfel = [];
+  if (meta.skarmStatus && meta.pdfStatus && meta.skarmStatus !== meta.pdfStatus)
+    paritetsfel.push(`elnätsstatus: skärmen säger "${meta.skarmStatus}", rapporten "${meta.pdfStatus}"`);
+  const sKm = meta.skarmKm || [], pKm = meta.pdfKm || [];
+  if (sKm.length && pKm.length && sKm[0] !== pKm[0])
+    paritetsfel.push(`räckvidd: skärmen visar ${sKm[0]} km, rapporten ${pKm[0]} km`);
   if (!sidor.length) { console.log(`  FEL  ${namn}\n         inga sidor hittades`); fel++; continue; }
   if (!meta.friskrivning) brott.push({ sida: '(friskrivningen)', scrollHeight: 0, clientHeight: 0, klippta: 1, lagstText: 'texten når inte "ELSÄK-FS"' });
-  console.log(`  ${brott.length ? 'FEL ' : 'OK  '} ${namn}${meta.varningar ? `  (${meta.varningar} varningar)` : ''}`);
+  const trasigt = brott.length + paritetsfel.length;
+  console.log(`  ${trasigt ? 'FEL ' : 'OK  '} ${namn}${meta.varningar ? `  (${meta.varningar} varningar)` : ''}`
+    + (meta.skarmStatus ? `  [elnät ${meta.skarmStatus}${sKm[0] ? `, ${sKm[0]} km` : ''}]` : ''));
+  for (const f of paritetsfel) console.log(`         ! PARITET  ${f}`);
   for (const s of sidor) {
     const trasig = s.klippta > 0 || s.scrollHeight !== s.clientHeight;
     console.log(`         ${trasig ? '!' : ' '} ${s.sida.padEnd(6)} scroll ${s.scrollHeight}/${s.clientHeight}`
       + `  sista lövet ${String(s.lagst).padStart(6)}  klippta ${s.klippta}`
       + (trasig ? `   <- "${s.lagstText}"` : ''));
   }
-  if (brott.length) fel++;
+  if (trasigt) fel++;
 }
 
 if (BEHALL) console.log(`\n  sonden sparad: ${sondFil}`);
