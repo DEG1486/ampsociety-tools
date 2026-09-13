@@ -17,6 +17,13 @@
   // (t.ex. Renault Zoe, BMW i3 trefas) går till 22 kW.
   const HW_LIMIT_KW = Math.min(OUTLET_HW_LIMIT_KW, CAR_AC_LIMIT_KW);
 
+  // Marginalkrav mot tillgänglig serviseffekt för grön elnätsstatus. EN källa:
+  // tröskeln avgör statusen i computeGridAssessment OCH skrivs ut som "krav
+  // 10 %" i UI:t. De låg tidigare som två oberoende literaler — samma värde,
+  // men inget som höll dem ihop. Ändras den ena hade UI:t skrivit ut ett krav
+  // som inte tillämpades, tyst.
+  const GRID_MARGIN = 0.10;
+
   // Varningsorsaker från computeHubs när målet inte nås.
   const LIMIT_REASON = Object.freeze({
     HW: 'hwLimit',           // bilens AC-laddartak överskrids
@@ -106,8 +113,34 @@
     },
   };
 
-  // Bilmodeller — WLTP kombinerad (kwh100, kWh/100 km) och ANVÄNDBAR
+  // Bilmodeller — förbrukning (kwh100, kWh/100 km) och ANVÄNDBAR
   // batterikapacitet (battery, kWh).
+  //
+  // KÄLLA OCH DEFINITION (verifierad mot ev-database.org 2026-09-13 — läs det
+  // här innan någon "rättar" räckvidden igen):
+  // Talen är EV Databases VERKLIGA förbrukning, inte WLTP. EV Database publicerar
+  // tre olika tal per bil, och skillnaden mellan dem avgör om rangeKm ska ha ett
+  // η-led eller inte:
+  //   Vehicle Consumption (WLTP)  = användbart batteri / WLTP-räckvidd → BATTERISIDIG
+  //   Rated Consumption  (WLTP)   = ovanstående + laddförlust          → NÄTSIDIG
+  //   Vehicle Consumption (Real)  = användbart batteri / verklig räckvidd → BATTERISIDIG
+  // Kontroll: Cupra Born 58 kWh, 350 km verklig räckvidd → 16,6 kWh/100 km, exakt
+  // EV Databases 166 Wh/km. Talet är alltså batteri-till-hjul.
+  //
+  // Tabellen mätt mot 14 bilar: medelkvot 0,974 mot verklig förbrukning (spridning
+  // 0,044) och 1,081 mot nätsidig WLTP (spridning 0,069). Tabellen är alltså
+  // BATTERISIDIG, och rangeKm:s ONBOARD_EFFICIENCY är korrekt — den omvandlar
+  // uttagsmätt AC till energi i batteriet, vilket är precis vad kwh100 förutsätter.
+  //
+  // Fällan som gav ett falskt granskningsfynd 2026-09-13: `battery / kwh100` ger
+  // ~0,85 × tillverkarens WLTP-räckvidd, vilket ser ut som en laddförlust men är
+  // gapet mellan WLTP och verklig körning. Jämför aldrig mot WLTP-RÄCKVIDD för att
+  // avgöra den här frågan — jämför mot EV Databases FÖRBRUKNINGSTAL.
+  //
+  // Färskhet: avstämd mot EV Database 2026-09-13. EX30, Kona EV och EV3 låg då
+  // 9-11 % under deras verkliga tal och gav därmed ~10 % för lång räckvidd — de
+  // är uppdaterade till 17,8 / 16,8 / 17,1 och matchar nu exakt. Övriga ligger
+  // inom ±3 %. Stäm av mot ev-database.org vid nästa modellårsuppdatering.
   //
   // batteriet används inte i beräkningen — det är ett rimlighetstak för
   // presentationen. Utan energibehov per bil laddar modellen så länge bilen
@@ -117,7 +150,7 @@
   // påståendet om bilen som blir omöjligt.
   const CARS = [
     // Volvo
-    { id: 'ex30',       name: 'Volvo EX30',            kwh100: 16.0, battery: 64 },
+    { id: 'ex30',       name: 'Volvo EX30',            kwh100: 17.8, battery: 64 },
     { id: 'xc40',       name: 'Volvo EX40',            kwh100: 19.3, battery: 75 },
     // Tesla
     { id: 'tesla3',     name: 'Tesla Model 3 LR',      kwh100: 14.5, battery: 75 },
@@ -130,8 +163,8 @@
     { id: 'born',       name: 'Cupra Born',            kwh100: 16.0, battery: 58 },
     // Hyundai/Kia
     { id: 'ioniq5',     name: 'Hyundai Ioniq 5 RWD',  kwh100: 17.5, battery: 77 },
-    { id: 'kona',       name: 'Hyundai Kona EV',       kwh100: 15.0, battery: 65 },
-    { id: 'kiaev3',     name: 'Kia EV3 Long Range',    kwh100: 15.5, battery: 81 },
+    { id: 'kona',       name: 'Hyundai Kona EV',       kwh100: 16.8, battery: 65 },
+    { id: 'kiaev3',     name: 'Kia EV3 Long Range',    kwh100: 17.1, battery: 81 },
     { id: 'kiaev6',     name: 'Kia EV6 RWD',          kwh100: 17.2, battery: 77 },
     // Polestar/BMW/MG/Ford
     { id: 'polestar2',  name: 'Polestar 2 SM',         kwh100: 17.1, battery: 69 },
@@ -143,15 +176,11 @@
   const sum = (arr) => arr.reduce((a, b) => a + b, 0);
   const mean = (arr) => sum(arr) / arr.length;
 
-  // Skalar profilen så att dess MAX = target. Bevarar profilens form
-  // (kontor ser ut som kontor, bostad som bostad). Clampar [0, 1].
-  // Detta är default-modellen — slidern styr peak, inte medel.
-  function shapeToPeak(hours, target) {
-    const t = Math.max(0, Math.min(1, target));
-    const peak = Math.max(...hours) || 1;
-    const scale = t / peak;
-    return hours.map((h) => Math.max(0, Math.min(1, h * scale)));
-  }
+  // (shapeToPeak BORTTAGEN 2026-09-13: den exponerades på det publika API:t
+  // men nåddes av ingen kodväg — modellen normerar mot MEDEL via shapeToMean
+  // sedan v3.8.1, just för att toppnormering lät parkeringstidens utsmetning
+  // slå igenom på dygnsenergin. En oanvänd funktion på API:t ser ut som en
+  // modell någon kan luta sig mot.)
 
   // Skalar en kurva så att dess MEDEL blir target. Används på den faltade
   // närvarokurvan i stället för toppnormering: parkeringstiden smetar ut
@@ -174,6 +203,30 @@
 
   // Default systemverkningsgrad (kabel- + hub-förluster). Bilens onboard-
   // charger AC→DC räknas separat och ingår normalt INTE i EVSE-sizing.
+  //
+  // VILKEN SIDA ALLA EFFEKTTAK LIGGER PÅ — läs innan något ändras:
+  // Simuleringen kör helt och hållet NÄTSIDIGT. Både anläggningens tak
+  // (capPerHub) och fordonets tak (hwLimit) tolkas som effekt FÖRE
+  // förlusterna, och levererad energi fås genom × efficiency vid utdata.
+  //
+  // Handbok 3.1 avgör inte frågan: den anger "max inkommande ström 63 A"
+  // (= 43,65 kW) och "max simultan laddeffekt 44 kW" som samma storhet, och
+  // specificerar ingen verkningsgrad alls. 44 kW ÄR de 63 A avrundade.
+  // Konventionen här — allt nätsidigt — är därför ett val, men det säkra
+  // valet: den inkommande sidan är hårt begränsad av en 63 A huvudsäkring,
+  // vilket är den fysiska gräns elnätsbedömningen ska hållas mot.
+  //
+  // Priset: eftersom fordonets 11 kW egentligen är uttagsmätt blir högsta
+  // LEVERERADE effekt per bil 11 × 0,95 = 10,45 kW i stället för 11,0.
+  // Levererad energi underskattas därmed med exakt 1/0,95 − 1 = 5,26 % i de
+  // fall där bilens tak binder ENSAMT (effektstarka anläggningar med få
+  // uttag), och med noll när hubbtaket eller energibehovet binder — vilket är
+  // de allra flesta. Riktningen är försiktig: energi, räckvidd och intäkt
+  // underskattas, aldrig tvärtom.
+  //
+  // Att flytta fordonstaket till uttagssidan (dela med efficiency) är en
+  // legitim modelländring men INTE en ren buggfix — den höjer kundvända tal.
+  // Tas den: kör invariantsviten med --json före och efter och diffa.
   const DEFAULT_EFFICIENCY = 0.95;
   // Bilens egen laddare, AC→DC. Ingår INTE i DEFAULT_EFFICIENCY (som avser
   // kabel och hub fram till uttaget) men måste dras av innan uttagsmätta kWh
@@ -195,7 +248,10 @@
     const num = (v, d) => (Number.isFinite(v) ? v : d);
     const outlets = Math.max(1, num(inp.outlets, 1));
     const autoHubs = Math.max(1, Math.ceil(outlets / OUTLETS_PER_HUB));
-    const hubs = Number.isFinite(inp.hubs) ? inp.hubs : autoHubs;
+    // Clampas: tillståndet kan komma från en handredigerad URL-hash, och
+    // `hubs: -3` gav effektiv kapacitet -132 kW, sessionstak -90 och en
+    // elnätsbedömning som svarade status 'ok' på nonsens.
+    const hubs = Number.isFinite(inp.hubs) ? Math.max(1, Math.floor(inp.hubs)) : autoHubs;
     // SmartHub-spec: 44 kW är hårdvarutaket per hub.
     const capPerHub = Math.min(CAP_PER_HUB_KW, Math.max(1, num(inp.capPerHub, CAP_PER_HUB_KW)));
     const hwLimit = num(inp.hwLimitKW, HW_LIMIT_KW);
@@ -210,7 +266,11 @@
     if (rawOcc == null && typeof console !== 'undefined') {
       console.warn('Amp5Calc.computeEnergy: peakOccupancyPct saknas, defaultar till 0 (noll energiutput).');
     }
-    const occInput = rawOcc ?? 0;
+    // Enda numeriska fältet som tidigare INTE gick genom num(): en hash med
+    // peakOccupancyPct: NaN gav en beläggningskurva full av NaN (diagrammet
+    // sprack) och peakOccupancyPct: 2 gav 27,6 närvarande bilar på 20 uttag,
+    // medan invarianten 'belaggning-under-1' ändå passerade.
+    const occInput = Math.max(0, Math.min(1, num(rawOcc, 0)));
     // parkingInt cappas till 24 så presence-faltningen inte wrappar dygnet flera varv.
     const parkingInt = Math.min(24, Math.max(1, Math.round(num(inp.parkingHours, 1))));
 
@@ -264,7 +324,9 @@
     for (let s = 0; s < STEG; s++) profil48[s] = profile[Math.floor(s / 2)];
     // Skiftet är parkingInt HALVTIMMESSTEG (= L/2 timmar) — heltal för alla L.
     // Fönstrets mittpunkt ligger på parkSteg/2 - 0,5 steg, så närvaron blir en
-    // kvarts timme sen i förhållande till profilen. Den biasen är KONSTANT i L
+    // kvarts timme TIDIG i förhållande till profilen (presence[p] samplar
+    // profilen kring p + 0,5 steg). Tecknet stod fel här tidigare; magnituden
+    // och konstansen i L stämmer. Den biasen är KONSTANT i L
     // (till skillnad från den gamla paritetsväxlingen), ligger under utdatans
     // timupplösning, och delas av kohortsimuleringen nedan — som faltar samma
     // ankomster med samma fönster. Intern konsistens väger tyngre än en
@@ -324,7 +386,13 @@
     // vilket gav upp till 3,6 kW rippel i en kurva som analytiskt måste vara
     // rak, och fick "per laddtillfälle × antal" att avvika 8,9 % från "total
     // per dygn" (granskningsfynd B4).
-    const needDelivered = (inp.sessionNeedKWh != null && inp.sessionNeedKWh > 0)
+    // Golv på 0,1 kWh: 0 betyder "inget angivet behov" (= obegränsat, samma sak
+    // som tomt fält), men 0,0001 tolkades bokstavligt och gav noll energi. Ett
+    // behov under 0,1 kWh är inte ett meningsfullt laddtillfälle — behandla hela
+    // intervallet likadant i stället för att låta en decimal vippa utfallet
+    // mellan maximal och noll energi.
+    const NEED_FLOOR_KWH = 0.1;
+    const needDelivered = (Number.isFinite(inp.sessionNeedKWh) && inp.sessionNeedKWh >= NEED_FLOOR_KWH)
       ? inp.sessionNeedKWh : null;
     const needGrid = needDelivered != null ? needDelivered / efficiency : Infinity;
     const cohortCars = normArrivals.map((a) => a * totalSessionsPerDay); // ankommande bilar per halvtimmessteg
@@ -339,12 +407,28 @@
     const sessionCapacity = hubs * MAX_SESSIONS_PER_HUB;
     // Hur många laddpunkter kan som mest tilldelas ström samtidigt (63 A / 6 A
     // ≈ 10 per central enligt 8.3.1). Rapporteras för varningstexter.
+    //
+    // OBS — DEN HÄR KAN ALDRIG BINDA, och det är matematik, inte tur:
+    // allocatePower sätter charging = min(cap/start, tak), och eftersom
+    // start >= minChargeKW gäller alltid cap/start <= cap/minChargeKW = tak.
+    // Verifierat i 258 048 fall × 48 steg: noll träffar. Fältet returneras men
+    // läses varken av UI eller PDF. Det ligger kvar som en fysisk gräns värd
+    // att ha explicit i modellen — men behandla det som dokumentation, inte
+    // som ett skyddsnät. Samma kategori som HW_CONFIG: utlöses det är det ett
+    // modellfel att gräva i, inte ett normalfall.
     const maxChargingSlots = Math.floor(effectiveCap / minChargeKW);
 
     // Antal uppvärmningsdygn innan avläsning. Söks adaptivt: kör ett dygn i
     // taget och sluta när två dygn i rad ger identisk kurva.
     // Rutnätet är halvtimmar (STEG steg per dygn) — se ankomstmodellen ovan.
-    const MAX_DAYS = 40;
+    // Höjt 40 -> 80 i v3.9.0. Konvergenstestet kräver sedan dess att TILLSTÅNDET
+    // (kvarvarande behov per vistelsefas) upprepas, inte bara flödet — ett
+    // strängare krav som långa parkeringsfönster med mättad anläggning behöver
+    // fler dygn för att uppfylla. Värsta uppmätta fallet (flat, L=23 h, 90 %
+    // beläggning, behov 20 kWh) konvergerar på dygn 42; med taket 40 föll det
+    // tillbaka och energibalansen avvek 1,04 %. Kostar inget i normalfallet:
+    // loopen bryter när den är stationär, och medeltiden per anrop är 0,40 ms.
+    const MAX_DAYS = 80;
     const DT = 24 / STEG; // steglängd i timmar (0,5)
     const simulate = (cap, slotCap) => {
       const H = MAX_DAYS * STEG;
@@ -358,6 +442,13 @@
       // Rullande dygnsbuffert för konvergenstestet.
       let forra = null, denna = new Array(STEG).fill(0);
       let rec0 = -1; // första steget i det dygn som ska redovisas
+      // M4: utebliven konvergens var tyst OCH pekade åt fel håll — totalen
+      // stämde medan per-session-talet blev grovt för lågt, och identiteten
+      // "per session × antal = total" bröts med upp till 46 % utan att något
+      // fält avslöjade det. Rapporteras nu så en framtida modelländring som
+      // gör dynamiken segare inte kan passera CI tyst.
+      let konvergerade = false;
+      let forraStat = null; // kvarvarande behov per vistelsefas vid förra dygnsgränsen
       for (let h = 0; h < H; h++) {
         remaining[h] = needGrid;
         let activeCars = 0, present = 0;
@@ -424,8 +515,61 @@
           // står i kö klättrar i prioritetsordningen (köbonus, 8.3.1.3), så över
           // dygnet roterar tilldelningen — därför fördelas medeleffekten här.
           const servedShare = perCar * (charging / wanting) * sessionFrac;
-          for (const s0 of queue) {
-            const draw = Math.min(servedShare * DT, remaining[s0]); // kW × h → kWh
+
+          // OMFÖRDELNING INOM STEGET (granskningsfynd B2).
+          // Tidigare gällde draw = min(servedShare × DT, remaining) rakt av: en
+          // kohort som blev färdig tog bara sitt behov, och ÖVERSKOTTET kastades
+          // — medan bilar som ännu behövde energi stod bredvid och begränsades av
+          // sin egen tilldelning. Ett maxflödesoptimum visade att modellen låg på
+          // 89,8-98,9 % av vad en FIFO-styrd hub (handbokens köbonus, 8.3.1.3)
+          // levererar.
+          //
+          // UPPMÄTT EFFEKT av rättningen, svep om 5 760 konfigurationer:
+          // som mest +3,1 % total energi och +3,1 % toppeffekt, och 0,0 % i
+          // både defaultfallet och köpcentrumfallet. Granskningens skattning
+          // (4,5 % / 9,1 %) var för hög: den mätte hur mycket tilldelning som
+          // kastades, men mottagarna ligger oftast redan på sitt eget tak, så
+          // långt ifrån allt går att återvinna. Den referensimplementation som
+          // gav de högre talen viktade dessutom inte bilens tak med sessionFrac
+          // och lät därmed omfördelningen kringgå sessionstaket — samma fel som
+          // invarianten baslinje-energi fångade när det här skrevs.
+          //
+          // Vattenfyllnad: budgeten är exakt vad allocatePower säger att
+          // anläggningen levererar detta steg. Varje kohort begränsas av sitt
+          // kvarvarande behov OCH av vad en bil fysiskt hinner ta emot på DT
+          // timmar. Det som blir över efter en mättad kohort går vidare till
+          // övriga i stället för att försvinna. Totalen kan därför aldrig
+          // överstiga cap × DT, och per bil aldrig hwEff.
+          let budget = perCar * charging * DT;   // kWh anläggningen levererar
+          // Taket per kohortbil är hwEff × sessionFrac, inte hwEff: modellen är
+          // aggregerad, och en bil har bara session sessionFrac av tiden. Med
+          // hwEff rakt av lät omfördelningen bilarna kringgå sessionstaket, och
+          // den OKONTROLLERADE baslinjen levererade då mindre än den styrda —
+          // fysiskt omöjligt, och sviten fångade det direkt (baslinje-energi).
+          const bilTak = hwEff * sessionFrac * DT;
+          const draget = new Map();
+          let oppna = queue.filter((s0) => remaining[s0] > 1e-9);
+          while (budget > 1e-12 && oppna.length) {
+            let bilar = 0;
+            for (const s0 of oppna) bilar += cohortCars[s0 % STEG];
+            if (bilar <= 1e-12) break;
+            const perBil = budget / bilar;
+            const nasta = [];
+            let anvant = 0;
+            for (const s0 of oppna) {
+              const hittills = draget.get(s0) || 0;
+              const tak = Math.min(remaining[s0] - hittills, bilTak - hittills);
+              if (tak <= 1e-12) continue;
+              const d = Math.min(perBil, tak);
+              draget.set(s0, hittills + d);
+              anvant += d * cohortCars[s0 % STEG];
+              if (d < tak - 1e-12) nasta.push(s0); // ännu inte mättad
+            }
+            budget -= anvant;
+            if (anvant <= 1e-12) break;           // ingen kan ta emot mer
+            oppna = nasta;
+          }
+          for (const [s0, draw] of draget) {
             remaining[s0] -= draw;
             stegKWh += draw * cohortCars[s0 % STEG];
             if (rec0 >= 0 && s0 >= rec0 && s0 < rec0 + STEG) sessionKWh[s0 - rec0] += draw;
@@ -447,17 +591,54 @@
           if (forra) {
             let diff = 0;
             for (let t = 0; t < STEG; t++) diff = Math.max(diff, Math.abs(denna[t] - forra[t]));
+            // FLÖDET räcker inte som konvergenskriterium — TILLSTÅNDET måste
+            // också ha satt sig. En mättad anläggning levererar konstant effekt
+            // från första dygnet medan fördelningen MELLAN kohorter fortfarande
+            // rör sig; testet slog då till på dygn 2 och avläsningsdygnet blev
+            // inte stationärt. Identiteten "per session × antal = total" bröts
+            // med upp till 13,2 % i 532 av 69 120 fall.
+            //
+            // Latent redan före v3.9.0: med uniform tilldelning följde
+            // kohortfördelningen flödet så nära att det aldrig syntes. När
+            // omfördelningen (B2) kopplade ihop kohorterna avslöjades det.
+            // Jämför därför kvarvarande behov för hela parkeringsfönstrets
+            // kohorter mot samma kohorter ett dygn tidigare.
+            // Ögonblicksbilden måste SPARAS vid dygnsgränsen. remaining[] muteras
+            // på plats, så att vid tiden h jämföra remaining[h-k] mot
+            // remaining[h-k-STEG] jämför två OLIKA faser av vistelsen: den äldre
+            // kohorten har då hunnit ladda ett helt dygn till och är urdränerad.
+            // Det testet plana ut på 8-26 kWh och kunde aldrig slå till.
+            const dennaStat = new Array(parkSteg);
+            for (let k = 0; k < parkSteg; k++) {
+              const nu = h - k;
+              dennaStat[k] = nu >= 0 ? remaining[nu] : Infinity;
+            }
+            let statDiff = forraStat ? 0 : Infinity;
+            if (forraStat) {
+              for (let k = 0; k < parkSteg; k++) {
+                const x = dennaStat[k], y = forraStat[k];
+                if (x === Infinity && y === Infinity) continue; // obegränsat behov
+                statDiff = Math.max(statDiff, Math.abs(x - y));
+              }
+            }
+            forraStat = dennaStat;
+            diff = Math.max(diff, statDiff);
             // Sista kohorten i avläsningsdygnet (s0 = rec0+STEG-1) måste hinna
             // ladda hela sitt fönster: rec0 + STEG-1 + parkSteg <= H - 1. Det
             // gamla villkoret pekade åt fel håll och trunkerade i stället för
             // att rädda.
-            if (diff < 1e-9 || h + 1 + STEG + STEG + parkSteg > H) rec0 = h + 1;
+            const stationart = diff < 1e-9;
+            if (stationart || h + 1 + STEG + STEG + parkSteg > H) {
+              rec0 = h + 1;
+              konvergerade = stationart;
+            }
           }
           forra = denna;
           denna = new Array(STEG).fill(0);
         }
       }
-      return { power, sessionKWh, chargingCars, presentCars, wantingCars, perCarKW };
+      return { power, sessionKWh, chargingCars, presentCars, wantingCars, perCarKW,
+        konvergerade, simDygn: rec0 >= 0 ? Math.round(rec0 / STEG) : MAX_DAYS };
     };
 
     // Halvtimmesserier → timserier för UI, PDF och all logik nedan. Effekt och
@@ -474,6 +655,12 @@
     // Okontrollerad efterfrågan = samma simulering utan effekttak (bilarna
     // slutar ändå vid mött behov). SmartHub-levererat = capat av effectiveCap.
     const sim48 = simulate(effectiveCap, maxChargingSlots);
+    // M6: peakPowerKW nedan är ett TIMMEDEL av halvtimmesstegen — rätt för
+    // effekttariffen, eftersom svenska nätbolag debiterar på högsta
+    // timmedeleffekt. Men en säkring reagerar på strömmen över minuter, och
+    // halvtimmestoppen ligger upp till 3,05 % högre. Redovisas separat så
+    // elnätssidan kan använda rätt tal utan att effektavgiften ändras.
+    const peakPowerHalfHourKW = Math.max(...sim48.power, 0);
     const sim = {
       power: tillTimmar(sim48.power),
       chargingCars: tillTimmar(sim48.chargingCars),
@@ -558,6 +745,8 @@
       totalEnergyDay, totalEnergyFromGrid,
       avgPowerPerOutlet, avgPowerPerActive,
       peakPowerKW, peakDemandKW, peakReductionKW, avgPowerKW,
+      peakPowerHalfHourKW,
+      simKonvergerade: sim48.konvergerade, simDygn: sim48.simDygn,
       activeOutlets: avgActive,
       maxOutlets: outlets,
       peakOccupancyPct, targetPeakPct: occInput,
@@ -724,18 +913,45 @@
   //   capPerHub, installedHubs (optional) — används för att räkna ut hur många
   //     SmartHubs den TILLGÄNGLIGA effekten rymmer. Utan det kan UI:t råda
   //     "fler SmartHubs" i ett läge där elnätet inte tar en enda till.
-  function computeGridAssessment({ fuseSizeA, existingLoadPct, systemPeakKW, capPerHub, installedHubs }) {
+  function computeGridAssessment({ fuseSizeA, existingLoadPct, systemPeakKW, capPerHub, installedHubs, installedCapKW }) {
     const fuse = Math.max(1, fuseSizeA != null ? fuseSizeA : 0);
     // P = √3 × 400 V × I
     const servisKW = (Math.sqrt(3) * 400 * fuse) / 1000;
     const existingKW = servisKW * Math.max(0, Math.min(0.99, existingLoadPct ?? 0));
     const availableKW = servisKW - existingKW;
-    const surplusKW = availableKW - (systemPeakKW || 0);
+
+    // DIMENSIONERANDE LAST (granskningsfynd B1).
+    // Statusen jämförde tidigare servisen mot den MODELLERADE toppen — ett tal
+    // som följer av antagen beläggning, inte av vad anläggningen får dra. Appens
+    // egen defaultstart sa därför "OK, överskott +5,4 kW" för 1 SmartHub (44 kW)
+    // på en 63 A-servis med 20 % grundlast (34,9 kW tillgängligt), samtidigt som
+    // hubsWithinAvailable i SAMMA returobjekt var 0. Kundrapporten skrev ut båda
+    // talen: "TAK 44 kW" på sida 1 och "Överskott +5 kW · OK" på sida 2.
+    //
+    // En servis dimensioneras mot vad installationen KAN dra. installedCapKW är
+    // anläggningens effektiva tak (hubbar × kW/hub, redan nedkapat av ett
+    // angivet fastighetseffekttak). Är det taket högre än den lediga effekten
+    // räcker servisen inte — oavsett hur lugn den antagna beläggningen är.
+    //
+    // Utelämnas installedCapKW faller allt tillbaka på det gamla beteendet, så
+    // äldre anropare påverkas inte.
+    const installedKW = (Number.isFinite(installedCapKW) && installedCapKW > 0) ? installedCapKW : null;
+    const dimensionerandeKW = Math.max(systemPeakKW || 0, installedKW || 0);
+    const surplusKW = availableKW - dimensionerandeKW;
+    // Överskottet mot enbart den modellerade lasten — svarar på "räcker elnätet
+    // för det antagna laddbehovet?", vilket är en annan fråga än om
+    // installationens märkeffekt ryms.
+    const surplusVsPeakKW = availableKW - (systemPeakKW || 0);
+    // Binder installationens märkeffekt i stället för den modellerade toppen?
+    // Då är åtgärden inte nödvändigtvis servisutökning: ett statiskt
+    // fastighetseffekttak eller dynamisk lastbalansering (ALM, handbok 8.2 —
+    // kräver extern energimätare) begränsar anläggningen mot servisen i stället.
+    const limitedByInstalled = installedKW != null && installedKW > (systemPeakKW || 0) + 1e-9;
     const coverageRatio = systemPeakKW > 0 ? availableKW / systemPeakKW : Infinity;
     // Marginalband: en servis som körs på sitt märkvärde är inte "OK". Kräver
     // minst 10 % ledig kapacitet kvar efter laddningen för grön status —
     // tidigare gav 0,1 % marginal grönt ljus (granskningsfynd C4).
-    const MARGIN = 0.10;
+    const MARGIN = GRID_MARGIN;
     const marginRatio = availableKW > 0 ? surplusKW / availableKW : 0;
     // Negativt överskott betyder alltid att servisen inte räcker. Den gamla
     // coverageRatio-grenen lät "Marginellt: knappt tillräcklig kapacitet" stå
@@ -787,6 +1003,7 @@
       servisKW, existingKW, availableKW, surplusKW, coverageRatio, marginRatio,
       status, extraNeeded, upgradeCostLow, upgradeCostHigh,
       hubsWithinAvailable, hubsHeadroom,
+      installedCapKW: installedKW, dimensionerandeKW, surplusVsPeakKW, limitedByInstalled,
     };
   }
 
@@ -866,7 +1083,13 @@
       materialCost: material, installationCost: installation,
       // Priserna ekas tillbaka så att PDF:en kan redovisa vad paybacken bygger på.
       // Utan dem kan mottagaren inte kontrollräkna rubriktalet (granskningsfynd E3).
+      // Effekttariffen, dess topplast och D&U-procenten saknades: beloppen stod
+      // i rapporten men satsen bakom dem gick inte att härleda, och D&U räknas
+      // dessutom på BRUTTOkapitalet även när investeringsstöd dragits av — ett
+      // medvetet val som bara stod i koden (granskningsfynd M7).
       electricityPrice: electricityPrice || 0, chargingFee: chargingFee || 0,
+      powerTariff: powerTariff || 0, tariffPeakKW: peakPowerKW || 0,
+      omPctYear: Number.isFinite(omPctYear) ? omPctYear : 0.03,
       // Bakåtkomp — behåll äldre fältnamn som alias så PDF/övrig kod inte bryts
       hubCapital: material, outletCapital: installation,
       daysPerMonth: days,
@@ -884,8 +1107,16 @@
   }
 
   // Onboard-laddarens AC→DC-verkningsgrad. η ovan täcker kabel och hub fram till
-  // uttaget; WLTP mäter energi UR batteriet. Utan det här ledet blev räckvidden
-  // 8–10 % för hög i rapportens största tal (granskningsfynd C2).
+  // uttaget; kwh100 är batteri-till-hjul (se KÄLLA OCH DEFINITION vid CARS).
+  // Ledet omvandlar alltså uttagsmätt AC till energi i batteriet, och behövs
+  // därför — utan det blev räckvidden 8–10 % för hög (granskningsfynd C2).
+  //
+  // Verifierat mot källan 2026-09-13. Den tidigare formuleringen här — "WLTP
+  // mäter energi UR batteriet" — var fel som påstående om WLTP: deklarerad
+  // WLTP-förbrukning mäts FRÅN NÄTET och innehåller laddförlusten. Slutsatsen
+  // råkade ändå bli rätt, eftersom tabellen inte är WLTP utan EV Databases
+  // verkliga förbrukning, som ÄR batterisidig. Rör inte det här ledet utan att
+  // först läsa noten vid CARS.
   function rangeKm(kwh, kwh100, onboardEff) {
     if (!kwh || !kwh100) return 0;
     const eff = Number.isFinite(onboardEff) ? onboardEff : ONBOARD_EFFICIENCY;
@@ -897,11 +1128,10 @@
     OUTLET_HW_LIMIT_KW, CAR_AC_LIMIT_KW,
     DEFAULT_EFFICIENCY, ONBOARD_EFFICIENCY,
     LIMIT_REASON, LIMIT_REASON_LABEL, SCENARIO_PALETTE,
-    LB_STRATEGY, DEFAULT_STRATEGY, MIN_CHARGE_A, GRID_MARGIN: 0.10,
+    LB_STRATEGY, DEFAULT_STRATEGY, MIN_CHARGE_A, GRID_MARGIN,
     allocatePower, ampsToKW, isThreePhase,
     PROFILES, CARS,
     computeEnergy, computeHubs, computeGridAssessment, computeEconomics,
-    shapeToPeak,
     fmt, rangeKm, mean, sum,
   };
 })();

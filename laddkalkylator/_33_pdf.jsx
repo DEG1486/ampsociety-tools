@@ -390,18 +390,23 @@ function PDFWarningStrip({ warns }) {
   // med radavstånd 1,38 är fortfarande fullt läsbart; alternativet vore att
   // klippa en varning tyst, vilket är precis det felet den här remsan finns
   // till för att undvika.
+  // Tre steg, inte två: med två varningar OCH full investeringskalkyl (som
+  // sedan v3.8.9 redovisar effekttariffens och driftens satser) tog sida 2 slut
+  // vid 1129 px mot taket 1123. Kompressionen följer textmängden så att en
+  // gles rapport behåller sin luft.
   const tecken = warns.reduce((n, w) => n + w.length, 0);
   const tät = warns.length > 1 || tecken > 260;
+  const mycketTät = warns.length > 1 && tecken > 380;
   return (
     <div style={{
-      margin: tät ? '10px 56px 0 56px' : '14px 56px 0 56px',
-      padding: tät ? '6px 14px' : '8px 14px',
+      margin: tät ? (mycketTät ? '8px 56px 0 56px' : '10px 56px 0 56px') : '14px 56px 0 56px',
+      padding: tät ? (mycketTät ? '5px 14px' : '6px 14px') : '8px 14px',
       background: '#FFF3E0', borderLeft: '4px solid #E65100',
-      fontSize: 9.5, lineHeight: tät ? 1.38 : 1.5,
+      fontSize: 9.5, lineHeight: mycketTät ? 1.3 : (tät ? 1.38 : 1.5),
       color: '#5C2E00', fontWeight: 600,
     }}>
       {warns.map((w, i) => (
-        <div key={i} style={i > 0 ? { marginTop: tät ? 3 : 5 } : null}>⚠ {w}</div>
+        <div key={i} style={i > 0 ? { marginTop: mycketTät ? 2 : (tät ? 3 : 5) } : null}>⚠ {w}</div>
       ))}
     </div>
   );
@@ -643,7 +648,7 @@ function PDFEditorial({ data }) {
               {data.mode === 'energy' && data.inputs.sessionNeedKWh > 0
                 ? <> Varje bil antas behöva högst {data.inputs.sessionNeedKWh} kWh per laddtillfälle.</>
                 : null}
-              {' '}Räckvidd beräknas mot WLTP-förbrukning med avdrag för fordonets
+              {' '}Räckvidd beräknas mot verklig förbrukning med avdrag för fordonets
               laddförlust. Vintertid räkna 20–40 % högre energiåtgång per km.
             </div>
           </div>
@@ -898,7 +903,7 @@ function PDFCompare({ data }) {
             {data.const.sessionNeedKWh > 0
               ? <> Energibehov: {data.const.sessionNeedKWh} kWh/laddtillfälle.</>
               : null}
-            {' '}Räckvidd via WLTP-blandad körcykel med avdrag för fordonets
+            {' '}Räckvidd via verklig förbrukning med avdrag för fordonets
             laddförlust; vintertid 20–40 % högre åtgång.
           </div>
         </div>
@@ -928,7 +933,8 @@ function PDFCompareRow({ k, v, highlight }) {
 
 function GridStatusBadgePDF({ assessment }) {
   const Amp = window.Amp5Calc;
-  const { status, servisKW, availableKW, surplusKW, upgradeCostLow, upgradeCostHigh } = assessment;
+  const { status, servisKW, availableKW, surplusKW, upgradeCostLow, upgradeCostHigh,
+    installedCapKW, limitedByInstalled } = assessment;
   const STATUS_CFG = {
     ok:       { color: '#2E7D32', bg: '#E8F5E9', label: 'Elnät: OK' },
     marginal: { color: '#E65100', bg: '#FFF3E0', label: 'Elnät: Marginellt' },
@@ -939,19 +945,27 @@ function GridStatusBadgePDF({ assessment }) {
     { label: 'Elnätsstatus', val: cfg.label, bold: true, color: cfg.color },
     { label: 'Serviseffekt', val: `${Amp.fmt(servisKW, { digits: 0 })} kW` },
     { label: 'Tillgänglig',  val: `${Amp.fmt(availableKW, { digits: 0 })} kW` },
+    // Märkeffekten står nu i badgen. Sida 1 ritar effektgrafen med capline
+    // "TAK 44 kW"; att sida 2 bara visade den modellerade toppen lät en
+    // elkonsult se två tal som inte gick ihop (granskningsfynd B1).
+    ...(installedCapKW != null
+      ? [{ label: 'Märkeffekt', val: `${Amp.fmt(installedCapKW, { digits: 0 })} kW` }] : []),
     { label: 'Överskott',    val: `${surplusKW >= 0 ? '+' : ''}${Amp.fmt(surplusKW, { digits: 0 })} kW`,
       color: surplusKW >= 0 ? '#2E7D32' : '#C62828' },
   ];
   return (
     <div style={{ margin: '14px 56px 0 56px' }}>
       <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+        // Kolumnantalet FÖLJER kolumnerna. Det var hårdkodat till 4, så när
+        // märkeffekten tillkom hamnade den på en andra rad och sida 2 växte
+        // ~25-55 px i samtliga fall.
+        display: 'grid', gridTemplateColumns: `repeat(${cols.length}, 1fr)`,
         background: cfg.bg,
         border: `1px solid ${BRAND.line}`, borderLeft: `4px solid ${cfg.color}`,
       }}>
         {cols.map((c, i) => (
           <div key={i} style={{
-            padding: '10px 14px',
+            padding: cols.length > 4 ? '9px 10px' : '10px 14px',
             borderLeft: i > 0 ? `1px solid ${BRAND.line}` : 'none',
           }}>
             <div style={{ fontSize: 8, letterSpacing: 1.2, textTransform: 'uppercase', color: BRAND.mute, fontWeight: 700, marginBottom: 4 }}>
@@ -959,7 +973,7 @@ function GridStatusBadgePDF({ assessment }) {
             </div>
             <div style={{
               fontFamily: c.bold ? BRAND.sans : BRAND.serif,
-              fontSize: c.bold ? 11 : 20,
+              fontSize: c.bold ? (cols.length > 4 ? 10 : 11) : (cols.length > 4 ? 17 : 20),
               fontWeight: c.bold ? 700 : 500,
               letterSpacing: c.bold ? 0 : -0.3,
               color: c.color || BRAND.ink,
@@ -1000,6 +1014,7 @@ function EconomicsSectionPDF({ economics }) {
     monthlyEnergyCost, monthlyPowerCost, monthlyOmCost,
     monthlyRevenue, monthlyEnergyKWh, monthlyPurchasedKWh, paybackYears, paybackMonths,
     electricityPrice, chargingFee, daysPerMonth,
+    powerTariff, tariffPeakKW, omPctYear,
   } = economics;
   const hasGrant = (investmentGrant || 0) > 0;
   const hasRevenue = monthlyRevenue > 0;
@@ -1054,7 +1069,7 @@ function EconomicsSectionPDF({ economics }) {
       {/* Investeringsuppdelning + driftkostnadsbreakdown — kompakt 2-kolumns under huvudgriden */}
       <div style={{
         display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16,
-        marginTop: 8, fontSize: 9, color: BRAND.mute, lineHeight: 1.5,
+        marginTop: 6, fontSize: 9, color: BRAND.mute, lineHeight: 1.42,
       }}>
         <div>
           <strong style={{ color: BRAND.ink2 }}>Investering: </strong>
@@ -1066,13 +1081,17 @@ function EconomicsSectionPDF({ economics }) {
         <div>
           <strong style={{ color: BRAND.ink2 }}>Driftkostnad: </strong>
           {Amp.fmt(monthlyEnergyCost || 0, { digits: 0 })} kr energi
-          {(monthlyPowerCost || 0) > 0 && ` + ${Amp.fmt(monthlyPowerCost, { digits: 0 })} kr effektavgift`}
-          {(monthlyOmCost || 0) > 0 && ` + ${Amp.fmt(monthlyOmCost, { digits: 0 })} kr D&U`}
+          {(monthlyPowerCost || 0) > 0
+            && ` + ${Amp.fmt(monthlyPowerCost, { digits: 0 })} kr effektavgift `
+               + `(${Amp.fmt(powerTariff, { digits: 0 })}×${Amp.fmt(tariffPeakKW, { digits: 0 })} kW)`}
+          {(monthlyOmCost || 0) > 0
+            && ` + ${Amp.fmt(monthlyOmCost, { digits: 0 })} kr D&U `
+               + `(${Amp.fmt((omPctYear || 0) * 100, { digits: 0 })} %/år)`}
         </div>
       </div>
       {/* Priserna bakom paybacken måste stå i rapporten — annars kan mottagaren
           inte kontrollräkna rubriktalet (granskningsfynd E3/E4). */}
-      <div style={{ marginTop: 6, fontSize: 9, color: BRAND.mute, lineHeight: 1.5 }}>
+      <div style={{ marginTop: 4, fontSize: 9, color: BRAND.mute, lineHeight: 1.42 }}>
         <strong style={{ color: BRAND.ink2 }}>Antaganden: </strong>
         elpris {Amp.fmt(electricityPrice || 0, { digits: 2 })} kr/kWh på
         {' '}{Amp.fmt(monthlyPurchasedKWh || 0, { digits: 0 })} kWh inköpt ·
@@ -1122,7 +1141,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.8.7',
+      version: '3.9.0',
     },
   };
 }
