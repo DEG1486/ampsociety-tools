@@ -49,10 +49,13 @@ if (!KROM) {
   process.exit(0);
 }
 
-// Utan argument testas repots index.html; en .html-sökväg som argument gör att
-// en annan version kan prövas (t.ex. `git show HEAD:index.html` sparad någonstans).
-const FIL = process.argv.find((a) => a.toLowerCase().endsWith('.html')) || path.join(roten, 'index.html');
-const APP = 'file:///' + encodeURI(path.resolve(FIL).replace(/\\/g, '/'));
+// Utan argument testas repots index.html. Ett argument kan vara antingen en
+// .html-sökväg (t.ex. `git show HEAD:index.html` sparad någonstans) eller en
+// http(s)-adress — live-sajten går alltså att prova direkt, med rätt ursprung.
+const ADRESS = process.argv.find((a) => /^https?:\/\//i.test(a));
+const FIL = process.argv.find((a) => a.toLowerCase().endsWith('.html') && !/^https?:/i.test(a))
+  || path.join(roten, 'index.html');
+const APP = ADRESS || ('file:///' + encodeURI(path.resolve(FIL).replace(/\\/g, '/')));
 
 // Lägena sätts via URL-hashen (#k= + base64 av JSON, se decodeCalcState) —
 // snabbare och pålitligare än att klicka sig dit genom UI:t.

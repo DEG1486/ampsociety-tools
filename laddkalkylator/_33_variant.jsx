@@ -2,6 +2,14 @@
 // AmpSociety brand-kompatibel. Fallback-typsnitt (Playfair Display + Karla)
 // per grafisk manual v1.0. Balken som visuellt element. Primärfärg orange.
 
+// Appens version — EN källa för både skärmens sidfot och rapportens meta.
+// Den står i sidfoten för att frågan "kör du nya bygget?" ska gå att besvara med
+// ögat: 2026-09-14 fungerade en fix överallt utom i Daniels egen Edge-flik, och
+// svaret var att webbläsaren serverade den gamla filen ur cachen (Pages sätter
+// `max-age=600`). Versionen syntes då bara i PDF:en, alltså efter en export.
+// `verifiera-bygge.mjs` jämför den här raden mot literalen i _33_pdf.jsx.
+const APP_VERSION = '3.9.4';
+
 // ───────── PDF export helper ─────────
 function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
                        profileKey, peakOcc, desiredKWh, occPct, car,
@@ -14,7 +22,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     projectName: projectName || '', // U2-fix: tom sträng = ej angivet; PDF visar ej default-strängen
     date: new Date().toLocaleDateString('sv-SE'),
     reportId,
-    version: '3.9.4',
+    version: APP_VERSION,
   };
   const consts = {
     capPerHub, outletsPerHub: C.OUTLETS_PER_HUB,
@@ -165,7 +173,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       projectName: projectName || '', // U2-fix: tom sträng = ej angivet
       date: new Date().toLocaleDateString('sv-SE'),
       reportId,
-      version: '3.9.4',
+      version: APP_VERSION,
     },
   };
 }
@@ -1794,6 +1802,9 @@ function Footer() {
       vid låg beläggning — när antalet närvarande bilar tidvis understiger det
       antal som ryms på effekten — ger det något mindre energi än modellen visar.
       Vintertid räkna 20–40 % högre energiåtgång.
+      <div style={{ fontFamily: I.mono, fontSize: 9.5, letterSpacing: 0.5, marginTop: 10, color: I.mute }}>
+        Amp5 Laddkalkylator · v{APP_VERSION}
+      </div>
     </div>
   );
 }

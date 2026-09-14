@@ -68,12 +68,13 @@ for (const { uuid, fil } of ASSETS) {
   }
 }
 
-// Versionssträngen är hårdkodad på tre ställen i källfilerna. Går de isär visar
-// appen en version och PDF:en en annan.
+// Versionssträngen står i `APP_VERSION` i _33_variant.jsx (sidfoten och rapportens
+// meta läser den) och som literal i _33_pdf.jsx:s exempeldata. Går de isär visar
+// appen en version och PDF:en en annan — därför matchas båda formerna här.
 const versioner = new Map();
 for (const fil of ['_33_calc.js', '_33_variant.jsx', '_33_pdf.jsx']) {
   const txt = fs.readFileSync(path.join(harHar, fil), 'utf8');
-  for (const m of txt.matchAll(/version:\s*'(\d+\.\d+\.\d+)'/g)) {
+  for (const m of txt.matchAll(/(?:version:\s*|APP_VERSION\s*=\s*)'(\d+\.\d+\.\d+)'/g)) {
     if (!versioner.has(m[1])) versioner.set(m[1], []);
     versioner.get(m[1]).push(fil);
   }
