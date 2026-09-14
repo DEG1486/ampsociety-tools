@@ -11,6 +11,20 @@
   // avlivade-pastaenden.md MÅSTE "54 uttag" alltid följas av det här talet i
   // externt material — därför ligger det här och inte som en PDF-literal.
   const MAX_SESSIONS_PER_HUB = 30; // simultana laddsessioner per SmartHub
+  // SmartHubens inkommande huvudsäkring (handbok 3.1: "Max inkommande ström
+  // 63 A", "Huvudsäkring 63 A B"). CAP_PER_HUB_KW ovan ÄR de här 63 A avrundade
+  // uppåt: √3 × 400 × 63 / 1000 = 43,648 kW. Skillnaden på 0,81 % betyder inget
+  // för energin — men elnätsbedömningen lade den AVRUNDADE märkeffekten på ena
+  // sidan av olikheten och en EXAKT beräknad servis på den andra, och lät
+  // därmed läroboksfallet "en SmartHub på egen 63 A-servis, ingen annan last"
+  // landa på -0,352 kW, status "Servisutökning krävs" och en prislapp på
+  // 35-85 kkr (granskningsfynd A2, funnet oberoende av två granskare).
+  // Dimensioneringen mot servisen sker därför mot den exakta infeed-gränsen.
+  // Energimodellen behåller 44 kW: det är handbokens publicerade tal, och att
+  // ändra det där hade flyttat varje kundvänt energital 0,8 % utan att någon
+  // bett om det.
+  const HUB_INFEED_A = 63;
+  const HUB_INFEED_KW = (Math.sqrt(3) * 400 * HUB_INFEED_A) / 1000;
   const OUTLET_HW_LIMIT_KW = 22;   // hub-uttagets HW-tak (Type 2 trefas 32A)
   const CAR_AC_LIMIT_KW = 11;      // typisk modern EV on-board charger (trefas 16A)
   // Bilen är nästan alltid den lägre — endast en liten del av flottan
@@ -723,6 +737,16 @@
     const chargingAtPeak = sim.chargingCars[busiestHour];
     const presentAtPeak = sim.presentCars[busiestHour];
     const perCarAtPeakKW = chargingAtPeak > 1e-9 ? sim.perCarKW[busiestHour] : null;
+    // Lasten i SAMMA timme som folk-siffrorna samplas i. Utan den gick
+    // "laddar N bilar à X kW" inte att stämma av mot något utskrivet tal, och
+    // läsaren jämförde den mot dygnets Topplast — en ANNAN timme i 67 % av
+    // fallen. Och även när timmarna sammanfaller överstiger produkten timmens
+    // energi i 68 % av fallen (värst +97 %), eftersom perCarAtPeakKW är vad
+    // allocatePower TILLDELADE medan vattenfyllnaden levererar mindre så fort
+    // en kohort mött sitt behov. Båda talen är riktiga, de beskriver bara
+    // olika saker — så nu står lasten i samma timme bredvid dem
+    // (granskningsfynd A5, funnet oberoende av två granskare).
+    const powerAtBusiestKW = hourlyPower[busiestHour];
     // Kö = bilar som fortfarande BEHÖVER energi men inte får ström. Färdig-
     // laddade bilar som står kvar på platsen räknas inte som köande (G5).
     const queuedAtPeak = Math.max(0, sim.wantingCars[busiestHour] - chargingAtPeak);
@@ -774,7 +798,7 @@
       peakOccupancyPct, targetPeakPct: occInput,
       sessionsPerOutletPerDay, totalSessionsPerDay, kwhPerOutletPerDay,
       sessionNeedKWh: needDelivered, needLimited,
-      perCarAtPeakKW, chargingAtPeak,
+      perCarAtPeakKW, chargingAtPeak, powerAtBusiestKW,
       // Spec-gränser och kö (handbok 3.1, 8.3.1)
       presentAtPeak, queuedAtPeak, maxPresent, busiestHour, peakHour,
       wantingAtPeak: sim.wantingCars[busiestHour], hubsNeededForSessions,
@@ -965,7 +989,16 @@
     //
     // Utelämnas installedCapKW faller allt tillbaka på det gamla beteendet, så
     // äldre anropare påverkas inte.
-    const installedKW = (Number.isFinite(installedCapKW) && installedCapKW > 0) ? installedCapKW : null;
+    const installedRawKW = (Number.isFinite(installedCapKW) && installedCapKW > 0) ? installedCapKW : null;
+    // Anläggningen kan aldrig dra mer ur servisen än sina egna huvudsäkringar
+    // släpper igenom: 63 A per SmartHub (se HUB_INFEED_A). Utan hubbantal är
+    // gränsen okänd och märkeffekten används rakt av — bakåtkompatibelt.
+    const infeedKW = (Number.isFinite(installedHubs) && installedHubs > 0)
+      ? installedHubs * HUB_INFEED_KW
+      : null;
+    const installedKW = installedRawKW != null
+      ? (infeedKW != null ? Math.min(installedRawKW, infeedKW) : installedRawKW)
+      : null;
     const peakKW = Math.max(0, num(systemPeakKW, 0));
     const dimensionerandeKW = Math.max(peakKW, installedKW || 0);
     const surplusKW = availableKW - dimensionerandeKW;
@@ -988,10 +1021,37 @@
     // coverageRatio-grenen lät "Marginellt: knappt tillräcklig kapacitet" stå
     // kvar ända till 25 % överlast — etiketten var då direkt osann.
     // 'marginal' betyder nu entydigt: räcker, men mindre än 10 % marginal kvar.
-    const status = surplusKW < 0
+    // Toleransen finns för att ett överskott på exakt noll är ett legitimt
+    // gränsfall som flyttalsaritmetiken gärna gör till -1e-14. Utan den blev
+    // "en SmartHub på egen 63 A-servis" (överskott 0,000) godtyckligt antingen
+    // 'marginal' eller 'upgrade' beroende på avrundningen i sista biten — och
+    // 'upgrade' drar med sig en prislapp på 35 kkr i kundrapporten.
+    const NOLL = 1e-9;
+    const status = surplusKW < -NOLL
       ? 'upgrade'
-      : (marginRatio >= MARGIN ? 'ok' : 'marginal');
-    const extraNeeded = Math.max(0, -surplusKW);
+      : (marginRatio >= MARGIN - NOLL ? 'ok' : 'marginal');
+    // Samma tolerans som status: ett underskott på 1e-14 kW är noll, och utan
+    // golvet hade needsUpgradeCost nedan blivit sann och skrivit ut kostnadens
+    // fasta startbelopp (35 kkr) för en anläggning som precis går ihop.
+    const extraNeeded = -surplusKW > NOLL ? -surplusKW : 0;
+    // extraNeeded tar anläggningen till överskott 0 — alltså status 'marginal',
+    // "räcker, men utan marginal". Appens egen GRÖNA status kräver GRID_MARGIN
+    // ledigt DÄRUTÖVER, och det talet fanns inte: rådet gick aldrig att följa
+    // hela vägen till OK, och prislappen bredvid gällde den mindre utökningen
+    // (granskningsfynd A1). Nu redovisas båda leden.
+    //
+    // BÅDA talen förutsätter att fastighetens BEFINTLIGA last är oförändrad
+    // efter utökningen. Det är den fysiskt riktiga antagandet — en byggnad
+    // förbrukar inte mer för att säkringen bytts — men det är värt att säga
+    // uttryckligen, eftersom lasten matas in som en ANDEL av nuvarande servis.
+    // Matar man tillbaka en större säkring i appen skalas andelen upp och
+    // bedömningen blir en annan; det är inte en motsägelse mot talen här utan
+    // en följd av att indata är relativt.
+    // Faktorn (1 + NOLL) finns för att talet ska vara ett RÅD som går att följa:
+    // utan den landar den exakta lösningen på marginRatio = MARGIN − 1e-17 och
+    // statusen blir 'marginal', alltså precis inte det rådet lovade.
+    const extraNeededForOkRaw = dimensionerandeKW / (1 - MARGIN) * (1 + NOLL) - availableKW;
+    const extraNeededForOk = extraNeededForOkRaw > NOLL ? extraNeededForOkRaw : 0;
     // Uppskattning servisutökning — H2: tre regimer baserat på storlek av utökning.
     // Linjär modell underskattade 3-10× vid stora behov enligt elprojektör-granskning.
     //   0–80 kW   : befintlig kabel räcker, säkrings-/mätarbyte. 30–150 kkr.
@@ -1032,7 +1092,7 @@
       : null;
     return {
       servisKW, existingKW, availableKW, surplusKW, coverageRatio, marginRatio,
-      status, extraNeeded, upgradeCostLow, upgradeCostHigh,
+      status, extraNeeded, extraNeededForOk, upgradeCostLow, upgradeCostHigh,
       hubsWithinAvailable, hubsHeadroom,
       installedCapKW: installedKW, dimensionerandeKW, surplusVsPeakKW, limitedByInstalled,
     };
@@ -1161,6 +1221,7 @@
 
   window.Amp5Calc = {
     CAP_PER_HUB_KW, OUTLETS_PER_HUB, MAX_SESSIONS_PER_HUB, HW_LIMIT_KW, LCC_YEARS,
+    HUB_INFEED_A, HUB_INFEED_KW,
     OUTLET_HW_LIMIT_KW, CAR_AC_LIMIT_KW,
     DEFAULT_EFFICIENCY, ONBOARD_EFFICIENCY,
     LIMIT_REASON, LIMIT_REASON_LABEL, SCENARIO_PALETTE,

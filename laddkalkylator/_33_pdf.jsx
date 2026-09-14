@@ -338,7 +338,7 @@ function pdfWarnings(data) {
     // Visa inte kövarningen när överskottsvarningen redan täcker samma sak.
     if (harBehov && !q.needLimited && queueShare > 0.4 && (q.chargingAtPeak || 0) > 0
         && (q.sessionOverflowMax || 0) <= 0.5) {
-      warns.push(`Kö vid topplast: ${Amp.fmt(q.chargingAtPeak, { digits: 0 })} av `
+      warns.push(`Kö vid beläggningstopp: ${Amp.fmt(q.chargingAtPeak, { digits: 0 })} av `
         + `${Amp.fmt(present, { digits: 0 })} bilar laddar samtidigt à `
         + `ca ${Amp.fmt(q.perCarAtPeakKW, { digits: 1 })} kW, resten väntar på tur. `
         + `Bilarna når inte sitt energibehov under parkeringen.`);
@@ -797,6 +797,13 @@ function PDFCompare({ data }) {
                       v={`${GRID_TEXT[sc.grid.status] || sc.grid.status} · ${sc.grid.surplusKW >= 0 ? '+' : ''}${Amp.fmt(sc.grid.surplusKW, { digits: 0 })} kW`}
                       highlight={sc.grid.status !== 'ok' ? BRAND.accentDeep : undefined} />
                   )}
+                  {/* Dagräkningen följer scenariots EGEN profil (kontor 21,
+                      övriga 30). Två kort kan därför visa månadstal 62 % isär
+                      för identisk hårdvara utan att något säger varför
+                      (granskningsfynd A3). Samma rad som skärmens kort. */}
+                  {sc.ek && sc.ek.monthlyEnergyCost > 0 && (
+                    <PDFCompareRow k="Aktiva dagar/mån" v={`${Amp.fmt(sc.ek.daysPerMonth, { digits: 0 })} dgr`} />
+                  )}
                   {sc.ek && sc.ek.monthlyEnergyCost > 0 && (
                     <PDFCompareRow k="Elkostnad/mån" v={`${Amp.fmt(sc.ek.monthlyEnergyCost, { digits: 0 })} kr`} />
                   )}
@@ -957,7 +964,7 @@ function PDFCompareRow({ k, v, highlight }) {
 function GridStatusBadgePDF({ assessment }) {
   const Amp = window.Amp5Calc;
   const { status, servisKW, availableKW, surplusKW, upgradeCostLow, upgradeCostHigh,
-    installedCapKW, limitedByInstalled } = assessment;
+    installedCapKW, limitedByInstalled, extraNeeded, extraNeededForOk } = assessment;
   const STATUS_CFG = {
     ok:       { color: '#2E7D32', bg: '#E8F5E9', label: 'Elnät: OK' },
     marginal: { color: '#E65100', bg: '#FFF3E0', label: 'Elnät: Marginellt' },
@@ -1024,7 +1031,14 @@ function GridStatusBadgePDF({ assessment }) {
             // MÄRKEFFEKTEN som binder; rapporten skrev bara ut prislappen. Det
             // träffar appens defaultstart, alltså det allra första tillstånd en
             // säljare exporterar. Klausul i stället för eget block — sida 2 är tajt.
-            const grund = `Indikativ kostnad för servisutökning: ${fmtC(upgradeCostLow)}–${fmtC(upgradeCostHigh)}`;
+            // Två tal, inte ett. extraNeeded tar servisen till överskott 0,
+            // alltså "Marginellt" — inte grönt. Rådet gick tidigare aldrig att
+            // följa hela vägen till OK, och prislappen gällde det mindre steget
+            // (granskningsfynd A1). Båda förutsätter oförändrad grundlast.
+            const behov = `Krävs +${Amp.fmt(extraNeeded, { digits: 1 })} kW för att räcka, `
+              + `+${Amp.fmt(extraNeededForOk, { digits: 1 })} kW för ${Math.round(Amp.GRID_MARGIN * 100)} % marginal `
+              + `(vid oförändrad befintlig last)`;
+            const grund = `Indikativ kostnad för servisutökning: ${fmtC(upgradeCostLow)}–${fmtC(upgradeCostHigh)} · ${behov}`;
             return limitedByInstalled
               ? `${grund} · alternativ: begränsa anläggningen med ett fastighetseffekttak eller dynamisk lastbalansering`
               : grund;
@@ -1173,7 +1187,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.9.3',
+      version: '3.9.4',
     },
   };
 }

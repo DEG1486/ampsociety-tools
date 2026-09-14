@@ -1,4 +1,4 @@
-// test-fynd.mjs — regressionsspärrar för formelgranskningen 2026-09-13.
+﻿// test-fynd.mjs — regressionsspärrar för formelgranskningen 2026-09-13.
 //
 // Kör:  node laddkalkylator/test-fynd.mjs
 //       node laddkalkylator/test-fynd.mjs --json
@@ -96,9 +96,11 @@ lagg('täckning', 'elnät: formel, status och kostnadsregimer', () => {
     const fall = `${A}A last=${L}% topp=${peak} inst=${inst ?? '-'}`;
     const servis = Math.sqrt(3) * 400 * A / 1000;
     if (Math.abs(r.servisKW - servis) > 1e-9) fel.push(`serviseffekten ≠ √3·400·I (${fall})`);
-    const dim = Math.max(peak, inst || 0);
+    // A2: installerad effekt kapas av SmartHubens egen infeed (63 A/hub).
+    // Anropet ovan har installedHubs = 1, så taket är exakt HUB_INFEED_KW.
+    const dim = Math.max(peak, inst ? Math.min(inst, C.HUB_INFEED_KW) : 0);
     if (Math.abs(r.surplusKW - (servis * (1 - L / 100) - dim)) > 1e-9) fel.push(`överskottet ≠ tillgängligt − dimensionerande (${fall})`);
-    if (r.surplusKW < -1e-12 && r.status !== 'upgrade') fel.push(`negativt överskott utan servisutökning (${fall})`);
+    if (r.surplusKW < -1e-9 && r.status !== 'upgrade') fel.push(`negativt överskott utan servisutökning (${fall})`);
     if (r.status === 'ok' && r.marginRatio < C.GRID_MARGIN - 1e-12) fel.push(`grön status under marginalkravet (${fall})`);
     if ((r.extraNeeded > 0) !== (r.upgradeCostLow > 0)) fel.push(`kostnad och behov går isär (${fall})`);
     if (r.upgradeCostHigh > 0 && r.upgradeCostHigh < r.upgradeCostLow) fel.push(`hög < låg kostnad (${fall})`);
@@ -369,7 +371,7 @@ for (const [fynd, namn, kalla, re, meddelande] of kallkod) {
 lagg('paritet', 'varningar finns i både skärm och rapport', () => {
   const fel = [];
   const par = [
-    ['kövarning', /Kö vid topplast/, /Kö vid topplast/],
+    ['kövarning', /Kö vid beläggningstopp/, /Kö vid beläggningstopp/],
     ['sessionstak', /utan laddsession/, /utan laddsession/],
     ['batteri', /batteri/i, /batteri/i],
   ];
@@ -386,6 +388,74 @@ lagg('paritet', 'varningar finns i både skärm och rapport', () => {
   const compare = PDF.slice(PDF.indexOf('function PDFCompare'));
   if (!/ELSÄK-FS/.test(editorial)) fel.push('friskrivningen saknas i PDFEditorial');
   if (!/ELSÄK-FS/.test(compare)) fel.push('friskrivningen saknas i PDFCompare');
+  return fel;
+});
+
+// =========================================================================
+// Granskningsrunda 2026-09-14 — fynd A1-A5
+// =========================================================================
+
+lagg('A1', 'servisutökningens två tal går att följa hela vägen', () => {
+  const fel = [];
+  const A2KW = (a) => Math.sqrt(3) * 400 * a / 1000;
+  for (const A of [40, 63, 80, 125, 200, 400]) for (const L of [0, 0.2, 0.5, 0.8])
+  for (const hubs of [1, 2, 4, 8]) {
+    const r = C.computeGridAssessment({ fuseSizeA: A, existingLoadPct: L, systemPeakKW: 0,
+      capPerHub: 44, installedHubs: hubs, installedCapKW: hubs * 44 });
+    const fall = `${A}A last=${L * 100}% ${hubs}hub`;
+    if (r.extraNeededForOk < r.extraNeeded - 1e-9) fel.push(`"för OK" under "för marginal" (${fall})`);
+    // Båda talen förutsätter att den befintliga lasten är OFÖRÄNDRAD i kW —
+    // det är hela poängen med fyndet. Mata därför tillbaka samma absoluta last.
+    const E = r.existingKW;
+    for (const [namn, extra, vantad] of [['extraNeeded', r.extraNeeded, ['marginal', 'ok']],
+                                         ['extraNeededForOk', r.extraNeededForOk, ['ok']]]) {
+      if (extra <= 0) continue;
+      const nyServis = r.servisKW + extra;
+      const r2 = C.computeGridAssessment({ fuseSizeA: nyServis / A2KW(1), existingLoadPct: E / nyServis,
+        systemPeakKW: 0, capPerHub: 44, installedHubs: hubs, installedCapKW: hubs * 44 });
+      if (!vantad.includes(r2.status)) {
+        fel.push(`${namn} leder till '${r2.status}', inte ${vantad.join('/')} (${fall})`);
+      }
+    }
+  }
+  return fel;
+});
+
+lagg('A2', 'en SmartHub på egen 63 A-servis är inte en servisutökning', () => {
+  const fel = [];
+  // 44 kW är de 63 A avrundade uppåt. Jämförs det avrundade talet mot en exakt
+  // beräknad servis blir läroboksfallet rött med prislapp.
+  for (const hubs of [1, 2, 3, 4]) {
+    const r = C.computeGridAssessment({ fuseSizeA: 63 * hubs, existingLoadPct: 0, systemPeakKW: 0,
+      capPerHub: 44, installedHubs: hubs, installedCapKW: hubs * 44 });
+    const fall = `${63 * hubs}A / ${hubs} hub, ingen annan last`;
+    if (r.status === 'upgrade') fel.push(`status 'upgrade' (${fall})`);
+    if (r.upgradeCostLow > 0) fel.push(`prislapp ${r.upgradeCostLow} kr utan behov (${fall})`);
+    if (r.surplusKW < -1e-9) fel.push(`negativt överskott ${r.surplusKW} (${fall})`);
+  }
+  // Infeed-taket får aldrig höja den dimensionerande lasten, bara sänka den.
+  for (const hubs of [1, 2, 5]) for (const cap of [10, 22, 44]) {
+    const r = C.computeGridAssessment({ fuseSizeA: 630, existingLoadPct: 0, systemPeakKW: 0,
+      capPerHub: cap, installedHubs: hubs, installedCapKW: hubs * cap });
+    if (r.dimensionerandeKW > hubs * cap + 1e-9) fel.push(`dimensionerande över märkeffekten (${hubs}×${cap})`);
+  }
+  return fel;
+});
+
+lagg('A5', 'lasten i beläggningstoppen redovisas bredvid folk-siffrorna', () => {
+  const fel = [];
+  for (const pk of ['office', 'mall', 'residential', 'flat']) for (const L of [2, 8, 16])
+  for (const occ of [0.3, 0.85]) for (const behov of [null, 15]) {
+    const e = C.computeEnergy({ outlets: 54, hubs: 1, capPerHub: 44, systemCap: null,
+      parkingHours: L, profileHours: C.PROFILES[pk].hours, peakOccupancyPct: occ,
+      hwLimitKW: 11, efficiency: 0.95, sessionNeedKWh: behov, strategy: 'priority' });
+    const fall = `${pk} L=${L} occ=${occ} behov=${behov ?? '-'}`;
+    if (!Number.isFinite(e.powerAtBusiestKW)) fel.push(`powerAtBusiestKW saknas (${fall})`);
+    if (Math.abs(e.powerAtBusiestKW - e.hourly[e.busiestHour]) > 1e-9) {
+      fel.push(`powerAtBusiestKW ≠ hourly[busiestHour] (${fall})`);
+    }
+    if (e.powerAtBusiestKW > e.peakPowerKW + 1e-9) fel.push(`lasten i beläggningstoppen över dygnets topp (${fall})`);
+  }
   return fel;
 });
 

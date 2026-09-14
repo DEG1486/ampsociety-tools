@@ -14,7 +14,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     projectName: projectName || '', // U2-fix: tom sträng = ej angivet; PDF visar ej default-strängen
     date: new Date().toLocaleDateString('sv-SE'),
     reportId,
-    version: '3.9.3',
+    version: '3.9.4',
   };
   const consts = {
     capPerHub, outletsPerHub: C.OUTLETS_PER_HUB,
@@ -165,7 +165,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       projectName: projectName || '', // U2-fix: tom sträng = ej angivet
       date: new Date().toLocaleDateString('sv-SE'),
       reportId,
-      version: '3.9.3',
+      version: '3.9.4',
     },
   };
 }
@@ -1047,8 +1047,45 @@ function NumberField({
   );
 }
 
+// Dragningen sköts av PEKARHÄNDELSER, inte av <input type="range">.
+//
+// Det inbyggda reglaget spårar musen själv, och den kedjan brister på flera
+// håll: pekskärmar som kräver att fingret startar exakt på pucken, gest- och
+// pekplattedrivrutiner som äter musens rörelser mellan tryck och släpp, och
+// webbläsare som bara flyttar pucken vid klick. Symptomet är alltid detsamma
+// — klick längs axeln fungerar, dragning gör det inte.
+//
+// Nu räknas värdet ur spårets egen bredd och pointer capture håller kvar
+// dragningen tills fingret släpper, även utanför elementet. Samma väg för mus,
+// touch och penna. Pucken hamnar dessutom exakt under pekaren: det inbyggda
+// reglagets puck rör sig bara inom spåret minus puckbredden, så den låg upp
+// till 8 px fel mot grafiken i ändarna.
+//
+// <input> är kvar, men bara för tangentbord och skärmläsare (piltangenter,
+// Home/End, aria) — den tar inga pekarhändelser alls.
 function SliderField({ label, value, onChange, min, max, step = 1, suffix, hint }) {
   const pct = ((value - min) / (max - min)) * 100;
+  const sparRef = React.useRef(null);
+  const inputRef = React.useRef(null);
+
+  const vardeVidX = (clientX) => {
+    const el = sparRef.current;
+    if (!el) return value;
+    const r = el.getBoundingClientRect();
+    if (!(r.width > 0)) return value;
+    const andel = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    const steg = min + Math.round((andel * (max - min)) / step) * step;
+    // Avrundningen håller flyttalsdamm borta när step inte är ett heltal.
+    return Math.min(max, Math.max(min, Math.round(steg * 1e6) / 1e6));
+  };
+  const dra = (e) => {
+    const v = vardeVidX(e.clientX);
+    if (v !== value) onChange(v);
+  };
+  const slapp = (e) => {
+    try { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
+  };
+
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -1058,20 +1095,39 @@ function SliderField({ label, value, onChange, min, max, step = 1, suffix, hint 
         </div>
       </div>
       {/* Större klickyta (36px) + tjockare track + större puck = lättare att träffa */}
-      <div style={{ position: 'relative', height: 36, display: 'flex', alignItems: 'center', touchAction: 'none' }}>
+      <div
+        ref={sparRef}
+        onPointerDown={(e) => {
+          if (e.pointerType === 'mouse' && e.button !== 0) return;   // bara vänsterknapp
+          try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+          e.preventDefault();                                        // ingen textmarkering under draget
+          if (inputRef.current) inputRef.current.focus({ preventScroll: true });
+          dra(e);
+        }}
+        onPointerMove={(e) => {
+          let dragande = false;
+          try { dragande = e.currentTarget.hasPointerCapture(e.pointerId); } catch (_) {}
+          if (dragande) dra(e);
+        }}
+        onPointerUp={slapp}
+        onPointerCancel={slapp}
+        style={{ position: 'relative', height: 36, display: 'flex', alignItems: 'center', touchAction: 'none', cursor: 'pointer' }}>
         <div style={{ position: 'absolute', left: 0, right: 0, height: 4, background: I.line, borderRadius: 2 }} />
         <div style={{ position: 'absolute', left: 0, width: `${pct}%`, height: 4, background: I.ink, borderRadius: 2 }} />
         <div style={{
-          position: 'absolute', left: `calc(${pct}% - 10px)`,
+          // -13px, inte -10: pucken är 20 px bred PLUS 3 px ram på varje sida
+          // (content-box), så halva bredden är 13. Med -10 låg den 3 px till höger
+          // om sitt eget värde — synligt mot spårets fyllnad i ändarna.
+          position: 'absolute', left: `calc(${pct}% - 13px)`,
           width: 20, height: 20, borderRadius: 10,
           background: I.accent, border: `3px solid ${I.bg}`,
           boxShadow: '0 1px 3px rgba(0,0,0,0.18)',
           pointerEvents: 'none',
         }} />
-        <input type="range" value={value} min={min} max={max} step={step}
+        <input ref={inputRef} type="range" value={value} min={min} max={max} step={step}
           aria-label={label}
           onChange={(e) => onChange(Number(e.target.value))}
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer', margin: 0, padding: 0 }} />
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, margin: 0, padding: 0, pointerEvents: 'none' }} />
       </div>
       {hint && <div style={{ fontSize: 11, color: I.mute, marginTop: 6 }}>{hint}</div>}
     </div>
@@ -1347,7 +1403,7 @@ function FusePicker({ value, onChange }) {
 function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh100, queue, needMet }) {
   const C = window.Amp5Calc;
   const { status, servisKW, existingKW, availableKW, surplusKW, upgradeCostLow, upgradeCostHigh,
-    installedCapKW, surplusVsPeakKW, limitedByInstalled } = assessment;
+    installedCapKW, surplusVsPeakKW, limitedByInstalled, extraNeeded, extraNeededForOk } = assessment;
   const STATUS_CFG = {
     ok:       { color: '#2E7D32', bg: '#E8F5E9', label: 'OK: elnätet täcker laddningsbehovet' },
     marginal: { color: '#E65100', bg: '#FFF3E0', label: 'Marginellt: knappt tillräcklig kapacitet' },
@@ -1389,8 +1445,16 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh1
     // riktning för en marginal: den får aldrig se större ut än den är.
     ['Marginal mot tillgänglig effekt',
       `${C.fmt(Math.floor((assessment.marginRatio || 0) * 1000) / 10, { digits: 1 })} % (krav ${Math.round(C.GRID_MARGIN * 100)} %)`],
-    ...(perCarPeakKW != null ? [['Effekt per laddande bil vid topp', `${C.fmt(perCarLimitKW, { digits: 1 })} kW`]] : []),
-    ...(present > 0.5 ? [['Vid topp: laddar / köar', `${C.fmt(charging, { digits: 0 })} / ${C.fmt(queued, { digits: 0 })} bilar`]] : []),
+    // Folk-siffrorna samplas i BELÄGGNINGSTOPPEN, inte i effekttoppen — olika
+    // timme i 67 % av fallen. Och perCarPeakKW är vad lastbalanseringen
+    // TILLDELAR, medan lasten är vad bilarna faktiskt drar (lägre så snart en
+    // kohort mött sitt behov). Etiketterna säger nu vilken timme som avses, och
+    // lasten i samma timme står bredvid — annars jämförde läsaren produkten mot
+    // dygnets Topplast och fick upp till 97 % fel (granskningsfynd A5).
+    ...(present > 0.5 && queue && Number.isFinite(queue.powerAtBusiestKW)
+      ? [['Last vid beläggningstopp', `${C.fmt(queue.powerAtBusiestKW, { digits: 1 })} kW`]] : []),
+    ...(perCarPeakKW != null ? [['Tilldelad effekt per laddande bil', `${C.fmt(perCarLimitKW, { digits: 1 })} kW`]] : []),
+    ...(present > 0.5 ? [['Vid beläggningstopp: laddar / köar', `${C.fmt(charging, { digits: 0 })} / ${C.fmt(queued, { digits: 0 })} bilar`]] : []),
   ];
   return (
     <div style={{ border: `1px solid ${I.line}`, borderRadius: 2, background: I.surface, overflow: 'hidden' }}>
@@ -1430,6 +1494,18 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh1
           }}>
             Indikativ kostnad för servisutökning:{' '}
             <strong>{upgradeCostLow >= 1_000_000 ? `${C.fmt(upgradeCostLow / 1_000_000, { digits: 1 })} Mkr` : `${C.fmt(upgradeCostLow / 1000, { digits: 0 })} kkr`}–{upgradeCostHigh >= 1_000_000 ? `${C.fmt(upgradeCostHigh / 1_000_000, { digits: 1 })} Mkr` : `${C.fmt(upgradeCostHigh / 1000, { digits: 0 })} kkr`}</strong>
+            {/* extraNeeded tar anläggningen till överskott 0, alltså orange
+                "Marginellt" — inte grönt. Det andra talet saknades helt, så
+                rådet gick aldrig att följa hela vägen till OK. Antagandet om
+                oförändrad grundlast måste stå med: lasten matas in som en ANDEL
+                av nuvarande servis, och skalas därför upp om man matar tillbaka
+                en större säkring i appen (granskningsfynd A1). */}
+            <div style={{ marginTop: 6, fontSize: 10.5, color: I.ink2 }}>
+              Krävs: <strong>+{C.fmt(extraNeeded, { digits: 1 })} kW</strong> för att
+              servisen precis ska räcka, <strong>+{C.fmt(extraNeededForOk, { digits: 1 })} kW</strong> för
+              att nå {Math.round(C.GRID_MARGIN * 100)} % marginal (grön status).
+              Båda förutsätter att fastighetens befintliga last är oförändrad.
+            </div>
           </div>
         )}
         {limitedByInstalled && status !== 'ok' && (
@@ -1474,7 +1550,7 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh1
             background: '#FFF3E0', borderLeft: `3px solid #E65100`,
             fontSize: 11, color: '#5C2E00', lineHeight: 1.5,
           }}>
-            ⚠️ <strong>Kö vid topplast:</strong> {C.fmt(charging, { digits: 0 })} av{' '}
+            ⚠️ <strong>Kö vid beläggningstopp:</strong> {C.fmt(charging, { digits: 0 })} av{' '}
             {C.fmt(present, { digits: 0 })} bilar laddar samtidigt à{' '}
             <strong>{C.fmt(perCarLimitKW, { digits: 1 })} kW</strong>
             {' '}(≈{C.fmt(C.rangeKm(perCarLimitKW, carKwh100 || 16), { digits: 0 })} km/h),
@@ -2040,6 +2116,14 @@ function ScenarioCard({ color, scenario, energy, rangeKm, grid, ek, car, canRemo
             value={`${GRID_TEXT[grid.status] || grid.status} · ${grid.surplusKW >= 0 ? '+' : ''}${C.fmt(grid.surplusKW, { digits: 0 })} kW`}
             warn={grid.status !== 'ok'} />
         )}
+        {/* Dagräkningen MÅSTE stå på kortet. Den följer scenariots egen profil
+            (kontor 21 arbetsdagar, övriga 30), så två kort kan visa
+            månadskostnader 62 % isär för identisk hårdvara — och hela den
+            skillnaden är kalendern. Appens egna defaultscenarier (A kontor,
+            B köpcentrum) utlöser det (granskningsfynd A3). */}
+        {ek && ek.monthlyEnergyCost > 0 && (
+          <CardStat label="Aktiva dagar/mån" value={`${C.fmt(ek.daysPerMonth, { digits: 0 })} dgr`} />
+        )}
         {ek && ek.monthlyEnergyCost > 0 && (
           <CardStat label="Energikostnad/mån" value={`${C.fmt(ek.monthlyEnergyCost, { digits: 0 })} kr`} />
         )}
@@ -2478,7 +2562,7 @@ function StatList({ mode, energy, sizing, chartEnergy }) {
     ['Effektiv kapacitet',      `${C.fmt(energy.effectiveCap, { digits: 0 })} kW`],
     ['Topplast / medellast',    `${C.fmt(energy.peakPowerKW, { digits: 0 })} / ${C.fmt(energy.avgPowerKW, { digits: 0 })} kW`],
     ['Aktiva uttag (snitt)',    `${C.fmt(energy.activeOutlets, { digits: 1 })} av ${energy.maxOutlets}`],
-    ['Laddar / köar vid topp',  `${C.fmt(energy.chargingAtPeak, { digits: 0 })} / ${C.fmt(energy.queuedAtPeak, { digits: 0 })} bilar`],
+    ['Laddar / köar vid beläggningstopp', `${C.fmt(energy.chargingAtPeak, { digits: 0 })} / ${C.fmt(energy.queuedAtPeak, { digits: 0 })} bilar`],
     ['Laddningar / uttag·dygn', fmtSessions(energy.sessionsPerOutletPerDay)],
     ['Totalt laddningar / dygn', fmtSessions(energy.totalSessionsPerDay)],
     ['kWh / uttag·dygn',        `${C.fmt(energy.kwhPerOutletPerDay, { digits: 1 })} kWh`],
@@ -2491,32 +2575,44 @@ function StatList({ mode, energy, sizing, chartEnergy }) {
     ['Hubs pga uttag',          `${sizing.hubsByOutlets}`],
     ['Hubs pga sessioner',      `${sizing.hubsBySessions}`],
     ['Hubs pga effekt',         `${sizing.hubsByPower}${sizing.hubsByPowerIdeal > sizing.hubsByPower ? ` (idealt ${sizing.hubsByPowerIdeal})` : ''}`],
-    // Energiraderna kommer från profilmodellen — samma som grafen och ekonomin.
-    // computeHubs konstanta beläggning dygnet runt är rätt för dimensionering
-    // men överskattade levererad energi med upp till 2,3× (granskningsfynd B1).
-    ['Laddningar / uttag·dygn', fmtSessions(eng.sessionsPerOutletPerDay)],
-    ['Totalt laddningar / dygn', fmtSessions(eng.totalSessionsPerDay)],
-    ['kWh / uttag·dygn',        `${C.fmt(eng.kwhPerOutletPerDay, { digits: 1 })} kWh`],
+    // TVÅ MODELLER, TVÅ BLOCK (granskningsfynd A4). Raderna ovan och de två
+    // närmast nedan kommer ur computeHubs, som antar KONSTANT beläggning hela
+    // dygnet — rätt för dimensionering, medvetet konservativt. Raderna längst
+    // ned kommer ur profilmodellen, samma som grafen och investeringskalkylen.
+    // Tidigare stod dimensioneringens "Levererat / laddtillfälle" mitt bland
+    // profilmodellens rader, och de multiplicerade inte ihop: 12,4 × 0,66 = 8,2
+    // medan raden under sa 14,7. De skiljer sig i 37 % av hubs-fallen, värsta
+    // 128 %. Nu är varje block internt konsekvent och etiketten säger vilken
+    // modell talet kommer ur.
+    ['Dimensionerande: levererat / laddtillfälle',
+      `${C.fmt(sizing.deliveredEnergyPerOutlet, { digits: 1 })} kWh`],
     // actualEnergyPerOutlet är ett KAPACITETSTAK — vad anläggningen skulle
     // kunna leverera per laddtillfälle, inte vad bilen får. Etiketten
     // "Faktisk kWh / uttag" påstod precis det fältet inte får påstå
     // (granskningsfynd G1, återfallet A4): vid uppnått mål stod det 50,2 kWh
     // medan hjälterutan och PDF:en sa 30,0 kWh levererat. De två talen står nu
     // bredvid varandra med var sin ärlig etikett, så de inte kan förväxlas.
-    ['Levererat / laddtillfälle', `${C.fmt(sizing.deliveredEnergyPerOutlet, { digits: 1 })} kWh`],
-    ['Kapacitetstak / laddtillfälle',
+    ['Dimensionerande: kapacitetstak / laddtillfälle',
       sizing.achievesTarget
         ? `${C.fmt(sizing.actualEnergyPerOutlet, { digits: 1 })} kWh · +${C.fmt(sizing.headroomKWh, { digits: 1 })} marginal`
         : `${C.fmt(sizing.actualEnergyPerOutlet, { digits: 1 })} kWh · −${C.fmt(sizing.shortfallKWh, { digits: 1 })} under mål`,
     ],
+    // Profilmodellen. De tre raderna går ihop: levererat × laddningar = kWh/dygn.
+    ['Laddningar / uttag·dygn', fmtSessions(eng.sessionsPerOutletPerDay)],
+    ['Totalt laddningar / dygn', fmtSessions(eng.totalSessionsPerDay)],
+    ['Levererat / laddtillfälle', `${C.fmt(eng.perOutletKWh, { digits: 1 })} kWh`],
+    ['kWh / uttag·dygn',        `${C.fmt(eng.kwhPerOutletPerDay, { digits: 1 })} kWh`],
   ];
   return (
     <div style={{ border: `1px solid ${I.line}`, borderRadius: 2, background: I.surface }}>
       {mode === 'hubs' && (
         <div style={{ padding: '10px 16px', fontSize: 10.5, color: I.mute, lineHeight: 1.5, borderBottom: `1px solid ${I.line}`, background: I.bg }}>
-          Hubbantalet dimensioneras mot värsta fall (full beläggning hela
-          parkeringsfönstret). Energiraderna räknas på beläggningsprofilen —
-          samma modell som grafen och investeringskalkylen.
+          Två modeller på samma skärm. <strong>Dimensionerande</strong>-raderna och
+          hjälterutans kWh antar värsta fall: full beläggning hela parkerings-
+          fönstret, dygnet runt. Det ger ett konservativt hubbantal.
+          <strong>Profilmodellens</strong> rader längst ned räknar på den valda
+          beläggningsprofilen — samma modell som grafen och investeringskalkylen,
+          och därför högre tal när profilen har lugna timmar.
         </div>
       )}
       {rows.map(([k, v], i) => (
