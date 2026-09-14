@@ -1007,7 +1007,9 @@ function GridStatusBadgePDF({ assessment }) {
           </div>
         ))}
       </div>
-      {(status === 'upgrade' || status === 'marginal') && upgradeCostLow > 0 && (
+      {/* Bara 'upgrade': 'marginal' kräver surplusKW >= 0, alltså extraNeeded = 0
+          och därmed upgradeCostLow = 0 — grenen kunde aldrig bli sann. */}
+      {status === 'upgrade' && upgradeCostLow > 0 && (
         <div style={{
           marginTop: 4, padding: '6px 14px',
           background: cfg.bg, borderLeft: `4px solid ${cfg.color}`,
@@ -1018,7 +1020,14 @@ function GridStatusBadgePDF({ assessment }) {
             const fmtC = (kr) => kr >= 1_000_000
               ? `${Amp.fmt(kr / 1_000_000, { digits: 1 })} Mkr`
               : `${Amp.fmt(kr / 1000, { digits: 0 })} kkr`;
-            return `Indikativ kostnad för servisutökning: ${fmtC(upgradeCostLow)}–${fmtC(upgradeCostHigh)}`;
+            // Skärmen förklarar att servisutökning inte är enda vägen när det är
+            // MÄRKEFFEKTEN som binder; rapporten skrev bara ut prislappen. Det
+            // träffar appens defaultstart, alltså det allra första tillstånd en
+            // säljare exporterar. Klausul i stället för eget block — sida 2 är tajt.
+            const grund = `Indikativ kostnad för servisutökning: ${fmtC(upgradeCostLow)}–${fmtC(upgradeCostHigh)}`;
+            return limitedByInstalled
+              ? `${grund} · alternativ: begränsa anläggningen med ett fastighetseffekttak eller dynamisk lastbalansering`
+              : grund;
           })()}
         </div>
       )}
@@ -1164,7 +1173,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.9.2',
+      version: '3.9.3',
     },
   };
 }

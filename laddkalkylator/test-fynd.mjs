@@ -179,9 +179,15 @@ lagg('B2', 'ingen ledig kapacitet medan bilar köar', () => {
 
 lagg('B2', 'simuleringen når stationärt läge', () => {
   const fel = [];
+  // Svepet MÅSTE täcka svansen. Den första versionen hade L upp till 24 men bara
+  // occ ≤ 0,9 och behov ∈ {10, 30} — och missade därmed exakt det hörn där
+  // konvergensen är segast: hög beläggning, långt parkeringsfönster och ett
+  // behov som ligger nära vad anläggningen precis kan leverera. Där krävdes upp
+  // till 119 dygn, taket var 80, och per laddtillfälle rapporterades det
+  // angivna behovet som mött när det inte var det.
   for (const prof of ['office', 'mall', 'residential', 'flat'])
-  for (const L of [1, 8, 15, 20, 23, 24]) for (const occ of [0.1, 0.5, 0.9])
-  for (const o of [20, 54, 160]) for (const need of [null, 10, 30]) for (const hw of [11, 22]) {
+  for (const L of [1, 8, 15, 18, 20, 21, 22, 23, 24]) for (const occ of [0.1, 0.5, 0.85, 0.95, 1.0])
+  for (const o of [20, 54, 160]) for (const need of [null, 10, 18, 25, 30, 50]) for (const hw of [11, 22]) {
     const r = energi({ outlets: o, hubs: 1, parkingHours: L, profileHours: C.PROFILES[prof].hours, peakOccupancyPct: occ, sessionNeedKWh: need, hwLimitKW: hw });
     if (!r.simKonvergerade) fel.push(`ej stationär efter ${r.simDygn} dygn (${prof} L=${L} occ=${occ} ${o}u behov=${need} hw=${hw})`);
     // Den identitet som bröts med 13,2 % när konvergenstestet bara såg flödet.
@@ -306,9 +312,14 @@ const kallkod = [
     'etiketten "Faktisk kWh / uttag" är tillbaka — den sätts på actualEnergyPerOutlet, som är ett kapacitetstak'],
   ['A4', 'levererat visas bredvid kapacitetstaket', VARIANT, /Levererat \/ laddtillfälle/,
     'raden "Levererat / laddtillfälle" saknas, så kapacitetstaket står ensamt'],
+  // Kravet är att rutan villkoras på ett FAKTISKT behov. Sedan v3.9.3 är
+  // villkoret dessutom bara 'upgrade' — 'marginal' kunde aldrig ge ett behov.
   ['A5', 'kostnadsrutan kräver ett faktiskt behov', VARIANT,
-    /status === 'marginal'\)\s*&&\s*upgradeCostLow > 0/,
-    'skärmens kostnadsruta saknar spärren upgradeCostLow > 0 och skriver "0 kkr–0 kkr" vid marginalstatus'],
+    /status === 'upgrade' && upgradeCostLow > 0 && \(/,
+    'skärmens kostnadsruta villkoras inte på upgradeCostLow > 0 och kan skriva "0 kkr–0 kkr"'],
+  ['A5', 'samma spärr i kundrapporten', PDF,
+    /status === 'upgrade' && upgradeCostLow > 0 && \(/,
+    'PDF:ens kostnadsruta villkoras inte på upgradeCostLow > 0'],
   ['A6', 'marginalen avrundas nedåt', VARIANT, /Math\.floor\(\(assessment\.marginRatio/,
     'marginalraden avrundas inte nedåt och kan skriva "10 % (krav 10 %)" under en orange rubrik'],
   ['A7', 'sessionstaksvarningen finns i scenariokortet', VARIANT, /utan laddsession/,
@@ -327,6 +338,16 @@ const kallkod = [
     'effekttariffens sats saknas i rapporten — beloppet går inte att kontrollräkna'],
   ['M8', 'delad länk flaggas i investeringskalkylen', VARIANT, /öppnades från en delad länk/,
     'noten om att kostnadsfälten är mottagarens egna saknas'],
+  // Appen skriver sin EGEN hash vid varje tillståndsändring, så "hashen finns"
+  // betyder inte "länken kom utifrån". Utan jämförelsen mot det lokalt sparade
+  // tillståndet visades noten vid varje F5 av säljarens egen kalkyl — ett
+  // falskt påstående i kundvänd panel. Verifierat i webbläsaren: egen
+  // omladdning tiger, någon annans länk flaggar.
+  ['M8', 'länknoten skiljer egen hash från en delad', VARIANT,
+    /encodeCalcState\(delbaraFalt\(lokalt\)\) === h\.slice\(3\)/,
+    'STARTAD_FRAN_LANK sätts utan att jämföra hashen mot det lokalt sparade tillståndet — noten blir då sann vid varje omladdning'],
+  ['NY-2', 'rapporten förklarar när märkeffekten binder', PDF, /begränsa anläggningen med ett fastighetseffekttak/,
+    'PDF:en skriver ut kostnaden för servisutökning utan skärmens nyans att ett effekttak är ett alternativ'],
   ['B1', 'PDF-badgen visar märkeffekten', PDF, /label: 'Märkeffekt'/,
     'PDF:ens elnätsbadge visar inte anläggningens märkeffekt bredvid den tillgängliga effekten'],
   ['B1', 'PDF-badgens kolumnantal följer kolumnerna', PDF, /repeat\(\$\{cols\.length\}, 1fr\)/,

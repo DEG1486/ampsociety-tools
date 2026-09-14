@@ -14,7 +14,7 @@ function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
     projectName: projectName || '', // U2-fix: tom sträng = ej angivet; PDF visar ej default-strängen
     date: new Date().toLocaleDateString('sv-SE'),
     reportId,
-    version: '3.9.2',
+    version: '3.9.3',
   };
   const consts = {
     capPerHub, outletsPerHub: C.OUTLETS_PER_HUB,
@@ -165,7 +165,7 @@ function buildComparePdfData({ scenarios, car, carAcLimit, efficiency, sessionNe
       projectName: projectName || '', // U2-fix: tom sträng = ej angivet
       date: new Date().toLocaleDateString('sv-SE'),
       reportId,
-      version: '3.9.2',
+      version: '3.9.3',
     },
   };
 }
@@ -331,6 +331,12 @@ function decodeCalcState(str) {
 // tillbaka ur localStorage och läggas ovanpå hash-tillståndet — annars nollställs
 // säljarens egen kostnadsbild tyst vid varje omladdning av en delad länk.
 const KOSTNADSFALT = ['materialCost', 'installationCost', 'omPctYear', 'investmentGrant'];
+// EN definition av vad som faktiskt delas, använd både när hashen skrivs och när
+// den läses. Utan den gick de två isär, se STARTAD_FRAN_LANK nedan.
+function delbaraFalt(s) {
+  const { materialCost: _m, installationCost: _i, omPctYear: _o, investmentGrant: _g, ...delbart } = s;
+  return delbart;
+}
 // Sätts när appen startade från en delad länk. Kostnadsfälten följer INTE med
 // hashen (medvetet, G19) utan läses ur mottagarens egen localStorage — samma
 // länk kan därför ge avsändaren payback 13,9 år och mottagaren 2,0 år. Bortvalet
@@ -341,10 +347,18 @@ function loadInitialCalcState() {
   if (h && h.startsWith('#k=')) {
     const s = decodeCalcState(h.slice(3));
     if (s && typeof s === 'object') {
-      STARTAD_FRAN_LANK = true;
       try {
         const raw = localStorage.getItem(STORE_KEY);
         const lokalt = raw ? JSON.parse(raw) : null;
+        // Appen skriver sin EGEN hash vid varje tillståndsändring (autospar
+        // nedan), så "hashen finns" betyder inte "länken kom från någon annan".
+        // Utan den här jämförelsen visades noten "Sidan öppnades från en delad
+        // länk" vid varje F5 av säljarens egen kalkyl — ett falskt påstående i
+        // just den panel som visas för kund. Stämmer hashen med det lokalt
+        // sparade tillståndet är det vår egen; skiljer den sig kom den utifrån.
+        const egen = lokalt && typeof lokalt === 'object'
+          && encodeCalcState(delbaraFalt(lokalt)) === h.slice(3);
+        STARTAD_FRAN_LANK = !egen;
         if (lokalt && typeof lokalt === 'object') {
           for (const k of KOSTNADSFALT) {
             if (s[k] === undefined && lokalt[k] !== undefined) s[k] = lokalt[k];
@@ -539,8 +553,7 @@ function InstrumentVariant() {
     // hamnar i kundens webbhistorik, i utskriftens sidhuvud och i varje
     // skärmdelning av adressfältet (granskningsfynd G19) — kostnadsbilden
     // sparas lokalt men följer inte med länken.
-    const { materialCost: _m, installationCost: _i, omPctYear: _o, investmentGrant: _g, ...delbart } = s;
-    try { window.history.replaceState(null, '', '#k=' + encodeCalcState(delbart)); } catch (_) {}
+    try { window.history.replaceState(null, '', '#k=' + encodeCalcState(delbaraFalt(s))); } catch (_) {}
   }, [mode, uiMode, outlets, hubs, capPerHub, systemCap, parkingHours, profileKey,
       peakOcc, sessionNeedKWh, desiredKWh, occPct, carId, carAcLimit, efficiency, strategy,
       projectName, fuseSizeA, existingLoadPct, materialCost, installationCost,
@@ -1406,7 +1419,10 @@ function GridAssessment({ assessment, hubHint, perCarPeakKW, carAcLimit, carKwh1
             kostnad för servisutökning: 0 kkr–0 kkr" i samtliga marginalfall
             (granskningsfynd A5). Räknemotorn villkorar redan på faktiskt
             behov; det var bara skärmen som saknade motsvarigheten. */}
-        {(status === 'upgrade' || status === 'marginal') && upgradeCostLow > 0 && (
+        {/* Bara 'upgrade'. 'marginal' kräver surplusKW >= 0 ⟹ extraNeeded = 0
+            ⟹ upgradeCostLow = 0, så grenen kunde aldrig bli sann — den lades in
+            som ett skyddsnät men var död kod från början. */}
+        {status === 'upgrade' && upgradeCostLow > 0 && (
           <div style={{
             marginTop: 10, padding: '8px 12px',
             background: I.accentWash, borderLeft: `3px solid ${I.accent}`,

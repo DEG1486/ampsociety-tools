@@ -421,14 +421,27 @@
     // Antal uppvärmningsdygn innan avläsning. Söks adaptivt: kör ett dygn i
     // taget och sluta när två dygn i rad ger identisk kurva.
     // Rutnätet är halvtimmar (STEG steg per dygn) — se ankomstmodellen ovan.
-    // Höjt 40 -> 80 i v3.9.0. Konvergenstestet kräver sedan dess att TILLSTÅNDET
-    // (kvarvarande behov per vistelsefas) upprepas, inte bara flödet — ett
-    // strängare krav som långa parkeringsfönster med mättad anläggning behöver
-    // fler dygn för att uppfylla. Värsta uppmätta fallet (flat, L=23 h, 90 %
-    // beläggning, behov 20 kWh) konvergerar på dygn 42; med taket 40 föll det
-    // tillbaka och energibalansen avvek 1,04 %. Kostar inget i normalfallet:
-    // loopen bryter när den är stationär, och medeltiden per anrop är 0,40 ms.
-    const MAX_DAYS = 80;
+    // Höjt 40 -> 80 i v3.9.0 och 80 -> 200 i v3.9.3. Konvergenstestet kräver
+    // sedan v3.9.0 att TILLSTÅNDET (kvarvarande behov per vistelsefas) upprepas,
+    // inte bara flödet — ett strängare krav som långa parkeringsfönster med
+    // mättad anläggning behöver betydligt fler dygn för att uppfylla.
+    //
+    // 80 räckte inte. Uppmätt över 13 824 konfigurationer: 99,87 % konvergerar
+    // inom 50 dygn, men svansen går till **dygn 119** (residential, L = 21 h,
+    // 100 % beläggning, 54 uttag, behov 25 kWh, 22 kW). Med taket 80 föll de
+    // fallen tillbaka, och felet pekade ÅT FEL HÅLL: per laddtillfälle
+    // rapporterades exakt det angivna behovet (18,000 kWh) medan det sanna
+    // stationära värdet var 17,926 — alltså "behovet är mött" när det inte är
+    // det, plus 0,41 % brott mot energibalansen.
+    //
+    // Notera taktbegränsningen: fallbacken nedan fyrar vid
+    // h + 1 + 2×STEG + parkSteg > H, så konvergens kan aldrig DETEKTERAS senare
+    // än ungefär dygn MAX_DAYS − 4. Med 80 låg den gränsen på 78, och det
+    // tyngsta konvergerande fallet landade exakt där — marginalen var noll.
+    //
+    // Kostar inget i normalfallet: loopen bryter när den är stationär, så bara
+    // svansen på 18 fall av 13 824 kör långt.
+    const MAX_DAYS = 200;
     const DT = 24 / STEG; // steglängd i timmar (0,5)
     const simulate = (cap, slotCap) => {
       const H = MAX_DAYS * STEG;
@@ -514,7 +527,9 @@
           // Andel av de köande bilarna som får ström det här steget. Bilar som
           // står i kö klättrar i prioritetsordningen (köbonus, 8.3.1.3), så över
           // dygnet roterar tilldelningen — därför fördelas medeleffekten här.
-          const servedShare = perCar * (charging / wanting) * sessionFrac;
+          // (servedShare togs bort i v3.9.0: vattenfyllnaden nedan utgår från
+          // allocatePowers egen budget, perCar × charging × DT, och behöver
+          // inte medeleffekten per aktiv bil.)
 
           // OMFÖRDELNING INOM STEGET (granskningsfynd B2).
           // Tidigare gällde draw = min(servedShare × DT, remaining) rakt av: en
@@ -548,7 +563,9 @@
           // fysiskt omöjligt, och sviten fångade det direkt (baslinje-energi).
           const bilTak = hwEff * sessionFrac * DT;
           const draget = new Map();
-          let oppna = queue.filter((s0) => remaining[s0] > 1e-9);
+          // queue byggs redan med `if (remaining[s0] <= 1e-9) continue`, så
+          // filtret var en no-op. Kopian behövs ändå — oppna krymper per varv.
+          let oppna = queue.slice();
           while (budget > 1e-12 && oppna.length) {
             let bilar = 0;
             for (const s0 of oppna) bilar += cohortCars[s0 % STEG];
@@ -658,8 +675,13 @@
     // M6: peakPowerKW nedan är ett TIMMEDEL av halvtimmesstegen — rätt för
     // effekttariffen, eftersom svenska nätbolag debiterar på högsta
     // timmedeleffekt. Men en säkring reagerar på strömmen över minuter, och
-    // halvtimmestoppen ligger upp till 3,05 % högre. Redovisas separat så
-    // elnätssidan kan använda rätt tal utan att effektavgiften ändras.
+    // halvtimmestoppen ligger upp till 2,5 % högre.
+    //
+    // Talet REDOVISAS men styr ingenting: elnätsbedömningen får fortfarande
+    // timmedlet. Att byta är ett modellbeslut, inte en buggfix — det skulle
+    // flytta statusen i gränsfall, och sedan v3.9.0 är det ändå märkeffekten
+    // som dimensionerar i de flesta fall. Fältet finns för att skillnaden ska
+    // gå att inspektera, inte som ett skyddsnät.
     const peakPowerHalfHourKW = Math.max(...sim48.power, 0);
     const sim = {
       power: tillTimmar(sim48.power),
