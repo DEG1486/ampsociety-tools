@@ -64,6 +64,12 @@ const FALL = [
   ['batterivarning', { ...gemensamt, outlets: 25, hubs: 1, parkingHours: 16, profileKey: 'flat', peakOcc: 0.18, occPct: 0.18, sessionNeedKWh: null, fuseSizeA: 125, existingLoadPct: 0.20 }],
   ['TVÅ varningar · kö + batteri', { ...gemensamt, outlets: 54, hubs: 3, parkingHours: 24, profileKey: 'mall', peakOcc: 0.85, occPct: 0.85, sessionNeedKWh: 200, fuseSizeA: 63, existingLoadPct: 0.20 }],
   ['hubs-läget', { ...gemensamt, mode: 'hubs', outlets: 40, hubs: null, parkingHours: 6, profileKey: 'mall', peakOcc: 0.85, occPct: 0.85, desiredKWh: 120, sessionNeedKWh: null, fuseSizeA: 125, existingLoadPct: 0.20 }],
+  // Daniels fall 2026-09-14: 10 platser, bostadsprofil, 100 % topp och fri
+  // laddning. Antagandetexten blir som längst här (lång parkeringstid ger
+  // meningen om närvarokurvans topp, och FairSharedPower är ett längre
+  // strateginamn), och den sköts då in i sidfoten. Sidan spillde INTE över
+  // 1123 px — därför var alla fyra dåvarande kriterier gröna.
+  ['Daniels fall · bostad, 10 platser, 10 h', { ...gemensamt, outlets: 10, hubs: null, parkingHours: 10, profileKey: 'residential', peakOcc: 1.0, occPct: 1.0, sessionNeedKWh: null, strategy: 'fair', carId: 'id7', chargingFee: 0, fuseSizeA: 63, existingLoadPct: 0.20, materialCost: 100000, installationCost: 50000 }],
   ['jämförelseläget · 2 scenarier', { ...gemensamt, mode: 'compare', fuseSizeA: 63, existingLoadPct: 0.20 }],
   ['jämförelseläget · 4 scenarier', { ...gemensamt, mode: 'compare', fuseSizeA: 63, existingLoadPct: 0.20,
     scenarios: [
@@ -71,6 +77,18 @@ const FALL = [
       { name: 'Scenario B', colorSlot: 1, outlets: 50, hubs: 1, capPerHub: 44, systemCap: null, parkingHours: 8, profileKey: 'mall', peakOcc: 0.85 },
       { name: 'Scenario C', colorSlot: 2, outlets: 80, hubs: 2, capPerHub: 44, systemCap: null, parkingHours: 12, profileKey: 'residential', peakOcc: 0.9 },
       { name: 'Scenario D', colorSlot: 3, outlets: 108, hubs: 3, capPerHub: 44, systemCap: null, parkingHours: 3, profileKey: 'flat', peakOcc: 0.6 },
+    ] }],
+  // SEX scenarier är vad UI:t tillåter (MAX_SCENARIOS), alltså sidans värsta
+  // fall. Fyra testades tidigare och fyra höll — men det var fyra som sköt in
+  // friskrivningen i sidfoten, så den övre gränsen måste mätas den med.
+  ['jämförelseläget · 6 scenarier', { ...gemensamt, mode: 'compare', fuseSizeA: 63, existingLoadPct: 0.20,
+    scenarios: [
+      { name: 'Scenario A', colorSlot: 0, outlets: 20, hubs: 1, capPerHub: 44, systemCap: null, parkingHours: 9, profileKey: 'office', peakOcc: 0.85 },
+      { name: 'Scenario B', colorSlot: 1, outlets: 50, hubs: 1, capPerHub: 44, systemCap: null, parkingHours: 8, profileKey: 'mall', peakOcc: 0.85 },
+      { name: 'Scenario C', colorSlot: 2, outlets: 80, hubs: 2, capPerHub: 44, systemCap: null, parkingHours: 12, profileKey: 'residential', peakOcc: 0.9 },
+      { name: 'Scenario D', colorSlot: 3, outlets: 108, hubs: 3, capPerHub: 44, systemCap: null, parkingHours: 3, profileKey: 'flat', peakOcc: 0.6 },
+      { name: 'Scenario E', colorSlot: 4, outlets: 162, hubs: 4, capPerHub: 44, systemCap: null, parkingHours: 24, profileKey: 'residential', peakOcc: 1.0 },
+      { name: 'Scenario F', colorSlot: 5, outlets: 216, hubs: 5, capPerHub: 44, systemCap: 300, parkingHours: 1, profileKey: 'office', peakOcc: 0.5 },
     ] }],
 ];
 
@@ -113,15 +131,79 @@ const SOND = String.raw`
     for (const sida of ov.querySelectorAll('[id^="ed-"],[id^="cmp-"]')) {
       const r = sida.getBoundingClientRect();
       let klippta = 0, lagst = 0, lagstText = '';
+      const lov = [];
       for (const el of sida.querySelectorAll('*')) {
         if (el.children.length) continue;                    // bara LÖV
         if (!(el.textContent || '').trim()) continue;
-        const rel = el.getBoundingClientRect().bottom - r.top;
+        const box = el.getBoundingClientRect();
+        const rel = box.bottom - r.top;
         if (rel > lagst) { lagst = rel; lagstText = txt(el).slice(0, 40); }
         if (rel > ${SIDHOJD} + 0.5) klippta++;
+        if (box.width > 0 && box.height > 0) lov.push({ el: el, b: box, t: txt(el).slice(0, 34) });
       }
+
+      // KRITERIUM 3: två textlöv får inte ligga ovanpå varandra.
+      // Sidfoten är absolut placerad (bottom: 32) medan antagandetexten ligger
+      // i flödet — växer texten skjuts den in ÖVER sidfoten utan att sidan
+      // spiller över 1123 px. Kriterium 1 och 2 ser ingenting, och läsaren får
+      // två textstycken i samma pixlar (Daniels rapport 2026-09-14).
+      const krockar = [];
+      for (let i = 0; i < lov.length; i++) {
+        for (let j = i + 1; j < lov.length; j++) {
+          const A = lov[i].b, B = lov[j].b;
+          const ox = Math.min(A.right, B.right) - Math.max(A.left, B.left);
+          const oy = Math.min(A.bottom, B.bottom) - Math.max(A.top, B.top);
+          if (ox <= 1 || oy <= 1) continue;
+          const andel = (ox * oy) / Math.min(A.width * A.height, B.width * B.height);
+          if (andel > 0.15) krockar.push({ a: lov[i].t, b: lov[j].t, andel: Math.round(andel * 100) });
+        }
+      }
+
+      // KRITERIUM 4: ett textlöv får inte klippas av en förfader med
+      // overflow: hidden. Miljöbildens citat klipptes mitt i en rad när
+      // bilremsan pressades till sin minsta höjd — halva bokstäver kvar på
+      // fotot, och rektangeln låg hela tiden innanför sidan.
+      const dolda = [];
+      for (const l of lov) {
+        for (let f = l.el.parentElement; f && f !== sida.parentElement; f = f.parentElement) {
+          const cs = getComputedStyle(f);
+          if (cs.overflow !== 'hidden' && cs.overflowY !== 'hidden') continue;
+          const fb = f.getBoundingClientRect();
+          const sidor = [
+            ['över', Math.max(0, fb.top - l.b.top)],
+            ['under', Math.max(0, l.b.bottom - fb.bottom)],
+            ['vänster', Math.max(0, fb.left - l.b.left)],
+            ['höger', Math.max(0, l.b.right - fb.right)],
+          ].filter((s) => s[1] > 1.5);
+          if (sidor.length) {
+            dolda.push({ t: l.t, px: Math.round(sidor.reduce((a, s) => a + s[1], 0)),
+                         var: sidor.map((s) => s[0] + ' ' + Math.round(s[1])).join(', ') });
+            break;
+          }
+        }
+      }
+
+      // KRITERIUM 5: ingen text får spilla ut ur sin EGEN ruta i sidled.
+      // Jämförelsekortens elnätsrad skrev "Servisutökning · −185 kW" med nowrap
+      // i ett kort på 107 px; texten sköt rakt in över grannkortet och doldes
+      // av dess bakgrund. Varken krock- eller dolda-kriteriet såg det —
+      // grannens BAKGRUND är inget textlöv, och ingen förfader klipper.
+      // Ellips är undantaget: där är avkortningen avsiktlig.
+      const svammar = [];
+      for (const el of sida.querySelectorAll('*')) {
+        if (!(el.textContent || '').trim()) continue;
+        if (el.scrollWidth <= el.clientWidth + 1) continue;
+        const cs = getComputedStyle(el);
+        if (cs.textOverflow === 'ellipsis') continue;
+        if (el.clientWidth === 0) continue;                  // inline-element mäts inte
+        svammar.push({ t: txt(el).slice(0, 34), px: el.scrollWidth - el.clientWidth });
+      }
+
       ut.push({ sida: sida.id, scrollHeight: sida.scrollHeight, clientHeight: sida.clientHeight,
-                lagst: Math.round(lagst * 10) / 10, klippta, lagstText });
+                lagst: Math.round(lagst * 10) / 10, klippta, lagstText,
+                krockar: krockar.slice(0, 4), antalKrockar: krockar.length,
+                dolda: dolda.slice(0, 4), antalDolda: dolda.length,
+                svammar: svammar.slice(0, 4), antalSvammar: svammar.length });
     }
     ut.push({
       friskrivning: text.indexOf('ELSÄK-FS') >= 0,
@@ -147,7 +229,7 @@ const sondFil = path.join(tmp, 'sond.html');
 fs.writeFileSync(sondFil, html.replace('</body>', SOND + '</body>'), 'utf8');
 
 console.log('\nmatt-pdf — sidöverflöde i kundrapporten\n');
-console.log(`  sidhöjd ${SIDHOJD} px · kriterium: 0 klippta lövelement OCH scrollHeight = clientHeight\n`);
+console.log(`  sidhöjd ${SIDHOJD} px · fem kriterier: 0 klippta löv, scrollHeight = clientHeight, 0 textkrockar, 0 dolda löv, 0 som svämmar över i sidled\n`);
 
 let fel = 0;
 for (const [namn, tillstand] of FALL) {
@@ -169,7 +251,9 @@ for (const [namn, tillstand] of FALL) {
   if (krasch) { console.log(`  FEL  ${namn}\n         ${krasch.fel}`); fel++; continue; }
   const meta = rad.find((x) => x.friskrivning !== undefined) || {};
   const sidor = rad.filter((x) => x.sida);
-  const brott = sidor.filter((s) => s.klippta > 0 || s.scrollHeight !== s.clientHeight);
+  const trasigSida = (s) => s.klippta > 0 || s.scrollHeight !== s.clientHeight
+    || s.antalKrockar > 0 || s.antalDolda > 0 || s.antalSvammar > 0;
+  const brott = sidor.filter(trasigSida);
   const paritetsfel = [];
   if (meta.skarmStatus && meta.pdfStatus && meta.skarmStatus !== meta.pdfStatus)
     paritetsfel.push(`elnätsstatus: skärmen säger "${meta.skarmStatus}", rapporten "${meta.pdfStatus}"`);
@@ -183,10 +267,19 @@ for (const [namn, tillstand] of FALL) {
     + (meta.skarmStatus ? `  [elnät ${meta.skarmStatus}${sKm[0] ? `, ${sKm[0]} km` : ''}]` : ''));
   for (const f of paritetsfel) console.log(`         ! PARITET  ${f}`);
   for (const s of sidor) {
-    const trasig = s.klippta > 0 || s.scrollHeight !== s.clientHeight;
+    const trasig = trasigSida(s);
     console.log(`         ${trasig ? '!' : ' '} ${s.sida.padEnd(6)} scroll ${s.scrollHeight}/${s.clientHeight}`
       + `  sista lövet ${String(s.lagst).padStart(6)}  klippta ${s.klippta}`
-      + (trasig ? `   <- "${s.lagstText}"` : ''));
+      + `  krockar ${s.antalKrockar ?? 0}  dolda ${s.antalDolda ?? 0}  svämmar ${s.antalSvammar ?? 0}`
+      + (s.klippta > 0 || s.scrollHeight !== s.clientHeight ? `   <- "${s.lagstText}"` : ''));
+    for (const k of (s.krockar || []))
+      console.log(`           ! KROCK ${String(k.andel).padStart(3)} %  "${k.a}"  ligger på  "${k.b}"`);
+    for (const v of (s.svammar || []))
+      console.log();
+    for (const d of (s.dolda || []))
+      console.log(`           ! DOLD  ${String(d.px).padStart(3)} px utanför sin ruta (${d.var})  "${d.t}"`);
+    for (const v of (s.svammar || []))
+      console.log(`           ! BRED  ${String(v.px).padStart(3)} px för bred för sin egen ruta  "${v.t}"`);
   }
   if (trasigt) fel++;
 }

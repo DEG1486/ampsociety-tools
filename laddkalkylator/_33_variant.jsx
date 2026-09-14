@@ -8,7 +8,7 @@
 // svaret var att webbläsaren serverade den gamla filen ur cachen (Pages sätter
 // `max-age=600`). Versionen syntes då bara i PDF:en, alltså efter en export.
 // `verifiera-bygge.mjs` jämför den här raden mot literalen i _33_pdf.jsx.
-const APP_VERSION = '3.9.4';
+const APP_VERSION = '3.9.5';
 
 // ───────── PDF export helper ─────────
 function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,

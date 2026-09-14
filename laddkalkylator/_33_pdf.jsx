@@ -216,7 +216,14 @@ function PowerChart({ hourly, cap, height = 140, width = 682, theme = 'light' })
   if (!hasHourly(hourly)) return null;
   // Golv på 1 så vi aldrig delar med 0 (NaN-koordinater) när cap/hourly är 0.
   const max = Math.max(cap, ...hourly, 1) * 1.08;
-  const ax = { left: 32, right: 10, top: 8, bottom: 22 };
+  // Y-axelns etiketter ritas med textAnchor="end" strax till vänster om axeln,
+  // alltså UTÅT. Med en fast vänstermarginal på 32 px rymdes bara två siffror:
+  // "428 kW" stack 6 px utanför SVG:ns vänsterkant och klipptes tyst till
+  // "28 kW" i kundrapporten — en faktor 15 fel på y-axeln, och ingenting i
+  // sidmätningen kunde se det (rutan låg innanför sidan). Marginalen följer
+  // nu den längsta etiketten. 6 px/tecken är monofontens bredd vid 9 px.
+  const topEtikett = Math.round(max) + ' kW';
+  const ax = { left: Math.max(32, Math.ceil(topEtikett.length * 6) + 8), right: 10, top: 8, bottom: 22 };
   const W = width - ax.left - ax.right;
   const H = height - ax.top - ax.bottom;
   const barW = W / 24;
@@ -240,10 +247,6 @@ function PowerChart({ hourly, cap, height = 140, width = 682, theme = 'light' })
           {t.show && <text x={ax.left - 6} y={t.y + 3} fontSize="9" fill={muted} textAnchor="end" fontFamily={BRAND.mono}>{t.label}</text>}
         </g>
       ))}
-      {/* capacity line */}
-      <line x1={ax.left} x2={width - ax.right} y1={ax.top + H - (cap / max) * H} y2={ax.top + H - (cap / max) * H} stroke={capColor} strokeWidth="1" strokeDasharray="3 3" />
-      <rect x={ax.left + 2} y={ax.top + H - (cap / max) * H - 13} width={70} height={11} fill={theme === 'dark' ? BRAND.ink : '#fff'} opacity="0.92" />
-      <text x={ax.left + 5} y={ax.top + H - (cap / max) * H - 4} fontSize="9" fill={capColor} textAnchor="start" fontFamily={BRAND.mono} fontWeight="700">TAK {Math.round(cap)} kW</text>
       {/* bars */}
       {hourly.map((v, i) => {
         const h = (v / max) * H;
@@ -254,6 +257,12 @@ function PowerChart({ hourly, cap, height = 140, width = 682, theme = 'light' })
           </g>
         );
       })}
+      {/* Takmarkeringen ritas EFTER staplarna. SVG målar i dokumentordning, och
+          stapelbakgrunderna går hela vägen upp — låg den före täcktes etiketten
+          till hälften och såg avhuggen ut. */}
+      <line x1={ax.left} x2={width - ax.right} y1={ax.top + H - (cap / max) * H} y2={ax.top + H - (cap / max) * H} stroke={capColor} strokeWidth="1" strokeDasharray="3 3" />
+      <rect x={ax.left + 2} y={ax.top + H - (cap / max) * H - 13} width={Math.ceil(('TAK ' + Math.round(cap) + ' kW').length * 6) + 6} height={11} fill={theme === 'dark' ? BRAND.ink : '#fff'} opacity="0.92" />
+      <text x={ax.left + 5} y={ax.top + H - (cap / max) * H - 4} fontSize="9" fill={capColor} textAnchor="start" fontFamily={BRAND.mono} fontWeight="700">TAK {Math.round(cap)} kW</text>
       {/* hour axis */}
       {[0, 6, 12, 18, 23].map((h) => (
         <text key={h} x={ax.left + (h + 0.5) * barW} y={height - 6} fontSize="9" fill={muted} textAnchor="middle" fontFamily={BRAND.mono}>{String(h).padStart(2, '0')}</text>
@@ -434,6 +443,14 @@ function PDFEditorial({ data }) {
 
   return (
     <>
+      {/* Tröskelvärdena hör ihop med miljöbildens `containerType: 'size'` på
+          sida 2 — se kommentaren där. Reglerna måste ligga i ett stilblock:
+          @container går inte att uttrycka som inline-stil. */}
+      <style>{`
+        .pdf-bildremsa, .pdf-bildcitat { display: none; }
+        @container (min-height: 56px) { .pdf-bildremsa { display: block; } }
+        @container (min-height: 100px) { .pdf-bildcitat { display: block; } }
+      `}</style>
       {/* =========== PAGE 1 =========== */}
       <Page id="ed-1">
         {/* masthead */}
@@ -582,17 +599,29 @@ function PDFEditorial({ data }) {
             som blir över när texten fått sitt. Finns varningar att visa utgår
             bilden helt — en dekorativ bild ska aldrig tränga undan en varning
             eller friskrivningen (sidan har overflow: hidden och klipper tyst). */}
+        {/* Miljöbilden är sidans ENDA elastiska element — den ger ifrån sig
+            utrymme när texten växer. Priset var att citatet klipptes mitt i en
+            rad så fort remsan pressades till sin minsta höjd: i Daniels rapport
+            2026-09-14 stod halva bokstäver kvar på fotot, och sidmätningen såg
+            ingenting eftersom rutan låg innanför sidan.
+
+            Innehållet tänds därför i steg efter hur högt utrymme remsan FAKTISKT
+            fick (container queries mäter elementet, inte sidan): under 56 px
+            visas ingenting alls, och citatet kräver 100 px — det är vad två
+            rader i 20 px plus bottenmarginalen behöver. Hellre ingen bild än en
+            avhuggen mening i ett kundunderlag. */}
         {warns.length ? <div style={{ flex: '1 1 0', minHeight: 0 }} /> : (
         <div style={{
           margin: '16px 56px 0 56px',
-          flex: '1 1 0', minHeight: 40, maxHeight: 130,
+          flex: '1 1 0', minHeight: 0, maxHeight: 130,
           position: 'relative', overflow: 'hidden',
-          background: '#0F0C0B',
+          containerType: 'size',
         }}>
-          <img src={window.Amp5Assets.exteriorParking} alt=""
-            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0) 30%, rgba(0,0,0,.65) 100%)' }} />
-          <div style={{ position: 'absolute', bottom: 20, left: 20, right: 20, maxWidth: 440 }}>
+          <div className="pdf-bildremsa" style={{ position: 'absolute', inset: 0, background: '#0F0C0B' }} />
+          <img className="pdf-bildremsa" src={window.Amp5Assets.exteriorParking} alt=""
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+          <div className="pdf-bildremsa" style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0) 30%, rgba(0,0,0,.65) 100%)' }} />
+          <div className="pdf-bildcitat" style={{ position: 'absolute', bottom: 20, left: 20, right: 20, maxWidth: 440 }}>
             <div style={{ fontFamily: BRAND.serif, fontStyle: 'italic', fontSize: 20, color: '#fff', lineHeight: 1.25, textShadow: '0 2px 8px rgba(0,0,0,.6)' }}>
               "Dimensionera rätt från början, undvik plåsterlösningar."
             </div>
@@ -688,6 +717,14 @@ function PDFCompare({ data }) {
   // rader och friskrivningen längst ned klipptes vid fyra scenarier (1129 px
   // mot taket 1123). Bottenblocket komprimeras därför med antalet kort.
   const tatt = scenarios.length > 2;
+  // Andra steget. Vid FYRA kort låg friskrivningen 7 px inne i sidfoten —
+  // sidan spillde inte över 1123, så varken klippkriteriet eller scrollHeight
+  // såg något; det var krockkriteriet i matt-pdf.mjs som hittade det. UI:t
+  // tillåter sex kort, och bottenblocken måste rymmas även då.
+  const mycketTatt = scenarios.length > 3;
+  // Femte kortet gör raderna i korten så smala att etiketterna bryts — se
+  // PDFCompareRow.
+  const kompakt = scenarios.length > 4;
 
   return (
     <Page id="cmp-1">
@@ -725,8 +762,11 @@ function PDFCompare({ data }) {
       <div style={{
         margin: '28px 56px 0',
         display: 'grid',
-        gridTemplateColumns: `repeat(${Math.min(scenarios.length, 6)}, 1fr)`,
-        gap: 12,
+        // minmax(0, 1fr), inte 1fr: ett rutnätsobjekt har min-width: auto och
+        // kan därför inte krympa under sitt eget innehåll. Vid sex kort sköt
+        // raden ut 96 px utanför sidan och det sista kortet klipptes bort.
+        gridTemplateColumns: `repeat(${Math.min(scenarios.length, 6)}, minmax(0, 1fr))`,
+        gap: mycketTatt ? 8 : 12,
       }}>
         {scenarios.map((sc, i) => {
           const color = PALETTE[(sc.colorIndex != null ? sc.colorIndex : i) % PALETTE.length];
@@ -737,51 +777,51 @@ function PDFCompare({ data }) {
             <div key={sc.colorIndex != null ? sc.colorIndex : i} style={{
               border: `1px solid ${BRAND.line}`,
               borderTop: `3px solid ${color}`,
-              padding: '12px 12px 14px',
+              padding: mycketTatt ? '10px 8px 12px' : '12px 12px 14px',
               background: BRAND.paper,
               breakInside: 'avoid',
             }}>
               <div style={{
-                fontFamily: BRAND.mono, fontSize: 9, fontWeight: 700,
-                letterSpacing: 1.2, textTransform: 'uppercase', color,
-                paddingBottom: 8, borderBottom: `1px solid ${BRAND.lineSoft}`, marginBottom: 10,
+                fontFamily: BRAND.mono, fontSize: mycketTatt ? 8 : 9, fontWeight: 700,
+                letterSpacing: mycketTatt ? 0.4 : 1.2, textTransform: 'uppercase', color,
+                paddingBottom: mycketTatt ? 6 : 8, borderBottom: `1px solid ${BRAND.lineSoft}`, marginBottom: mycketTatt ? 8 : 10,
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
               }}>{sc.name}</div>
 
-              <div style={{ textAlign: 'center', marginBottom: 14 }}>
-                <div style={{ fontFamily: BRAND.serif, fontSize: 30, fontWeight: 700, color, lineHeight: 1, letterSpacing: -1 }}>
+              <div style={{ textAlign: 'center', marginBottom: mycketTatt ? 10 : 14 }}>
+                <div style={{ fontFamily: BRAND.serif, fontSize: mycketTatt ? 23 : 30, fontWeight: 700, color, lineHeight: 1, letterSpacing: -1 }}>
                   {Amp.fmt(out.perOutletKWh, { digits: 1 })}
                 </div>
                 <div style={{ fontSize: 8.5, color: BRAND.mute, marginTop: 3 }}>kWh / uttag</div>
               </div>
 
-              <PDFCompareRow k="Profil" v={profileLabelFor(inp.profileKey)} />
-              <PDFCompareRow k="Uttag" v={inp.outlets} />
-              <PDFCompareRow k="SmartHubs" v={out.hubs} />
-              <PDFCompareRow k="Parkering" v={`${inp.parkingHours} h`} />
+              <PDFCompareRow liten={kompakt} k="Profil" v={profileLabelFor(inp.profileKey)} />
+              <PDFCompareRow liten={kompakt} k="Uttag" v={inp.outlets} />
+              <PDFCompareRow liten={kompakt} k="SmartHubs" v={out.hubs} />
+              <PDFCompareRow liten={kompakt} k="Parkering" v={`${inp.parkingHours} h`} />
               {/* "Topp" visade REGLAGETS värde men såg ut som ett resultat.
                   Med kontorsprofil och 95 % på reglaget är den faktiska toppen
                   87 % — rapporten påstod alltså en högre beläggning än modellen
                   räknar med. PDFEditorial visar båda sedan v3.8.3
                   ("Peak-beläggning (profil)" / "Faktisk topp"); compare fick
                   aldrig samma fix. Samma två rader och samma ord här. */}
-              <PDFCompareRow k="Peak-beläggning" v={`${Math.round(inp.peakOcc * 100)} %`} />
-              <PDFCompareRow k="Faktisk topp" v={`${Math.round((out.peakOccupancyPct || 0) * 100)} %`} />
-              <PDFCompareRow k="kW/hub" v={inp.capPerHub} />
-              {inp.systemCap != null && <PDFCompareRow k="Systemtak" v={`${inp.systemCap} kW`} />}
+              <PDFCompareRow liten={kompakt} k="Peak-beläggning" v={`${Math.round(inp.peakOcc * 100)} %`} />
+              <PDFCompareRow liten={kompakt} k="Faktisk topp" v={`${Math.round((out.peakOccupancyPct || 0) * 100)} %`} />
+              <PDFCompareRow liten={kompakt} k="kW/hub" v={inp.capPerHub} />
+              {inp.systemCap != null && <PDFCompareRow liten={kompakt} k="Systemtak" v={`${inp.systemCap} kW`} />}
 
               <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${BRAND.lineSoft}` }}>
-                <PDFCompareRow k="Räckvidd" v={`${Amp.fmt(sc.rangeKm, { digits: 0 })} km`} highlight={color} />
-                <PDFCompareRow k="Topp-effekt" v={`${Amp.fmt(out.peakPowerKW, { digits: 0 })} kW`} />
-                <PDFCompareRow k="Laddn./uttag·dygn" v={
+                <PDFCompareRow liten={kompakt} k="Räckvidd" v={`${Amp.fmt(sc.rangeKm, { digits: 0 })} km`} highlight={color} />
+                <PDFCompareRow liten={kompakt} k="Topp-effekt" v={`${Amp.fmt(out.peakPowerKW, { digits: 0 })} kW`} />
+                <PDFCompareRow liten={kompakt} k="Laddn./uttag·dygn" v={
                   out.sessionsPerOutletPerDay >= 10
                     ? Amp.fmt(out.sessionsPerOutletPerDay, { digits: 0 })
                     : Amp.fmt(out.sessionsPerOutletPerDay, { digits: 1 })
                 } />
-                <PDFCompareRow k="kWh/uttag·dygn" v={`${Amp.fmt(out.kwhPerOutletPerDay, { digits: 0 })} kWh`} />
-                <PDFCompareRow k="Installerad" v={`${out.installedCap} kW`} />
-                {isLimited && <PDFCompareRow k="Effektiv" v={`${out.effectiveCap} kW`} highlight={BRAND.accentDeep} />}
-                <PDFCompareRow k="Total/dygn" v={`${Amp.fmt(out.totalEnergyDay, { digits: 0 })} kWh`} />
+                <PDFCompareRow liten={kompakt} k="kWh/uttag·dygn" v={`${Amp.fmt(out.kwhPerOutletPerDay, { digits: 0 })} kWh`} />
+                <PDFCompareRow liten={kompakt} k="Installerad" v={`${out.installedCap} kW`} />
+                {isLimited && <PDFCompareRow liten={kompakt} k="Effektiv" v={`${out.effectiveCap} kW`} highlight={BRAND.accentDeep} />}
+                <PDFCompareRow liten={kompakt} k="Total/dygn" v={`${Amp.fmt(out.totalEnergyDay, { digits: 0 })} kWh`} />
               </div>
 
               {/* Elnät och drift per scenario. Jämförelserapporten saknade båda
@@ -791,34 +831,48 @@ function PDFCompare({ data }) {
                   scenario utan att gissa ett pris per hub. */}
               {(sc.grid || sc.ek) && (
                 <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${BRAND.lineSoft}` }}>
-                  {sc.grid && (
-                    <PDFCompareRow
-                      k="Elnät"
+                  {/* Status OCH överskott på samma rad ger "Servisutökning ·
+                      −185 kW" — 24 tecken som aldrig ryms i ett kort på 107 px.
+                      Värdet har nowrap (ett tal får inte brytas mitt itu), så
+                      raden sköt rakt in över nästa kort och klipptes av dess
+                      bakgrund. Ingen mätning såg det: ingen förfader klipper,
+                      och grannkortets text träffades inte. Från fem kort delas
+                      raden därför i två korta. */}
+                  {sc.grid && (kompakt ? (
+                    <>
+                      <PDFCompareRow liten k="Elnät"
+                        v={GRID_TEXT[sc.grid.status] || sc.grid.status}
+                        highlight={sc.grid.status !== 'ok' ? BRAND.accentDeep : undefined} />
+                      <PDFCompareRow liten k="Överskott"
+                        v={`${sc.grid.surplusKW >= 0 ? '+' : ''}${Amp.fmt(sc.grid.surplusKW, { digits: 0 })} kW`}
+                        highlight={sc.grid.status !== 'ok' ? BRAND.accentDeep : undefined} />
+                    </>
+                  ) : (
+                    <PDFCompareRow k="Elnät"
                       v={`${GRID_TEXT[sc.grid.status] || sc.grid.status} · ${sc.grid.surplusKW >= 0 ? '+' : ''}${Amp.fmt(sc.grid.surplusKW, { digits: 0 })} kW`}
                       highlight={sc.grid.status !== 'ok' ? BRAND.accentDeep : undefined} />
-                  )}
+                  ))}
                   {/* Dagräkningen följer scenariots EGEN profil (kontor 21,
                       övriga 30). Två kort kan därför visa månadstal 62 % isär
                       för identisk hårdvara utan att något säger varför
                       (granskningsfynd A3). Samma rad som skärmens kort. */}
                   {sc.ek && sc.ek.monthlyEnergyCost > 0 && (
-                    <PDFCompareRow k="Aktiva dagar/mån" v={`${Amp.fmt(sc.ek.daysPerMonth, { digits: 0 })} dgr`} />
+                    <PDFCompareRow liten={kompakt} k="Aktiva dagar/mån" v={`${Amp.fmt(sc.ek.daysPerMonth, { digits: 0 })} dgr`} />
                   )}
                   {sc.ek && sc.ek.monthlyEnergyCost > 0 && (
-                    <PDFCompareRow k="Elkostnad/mån" v={`${Amp.fmt(sc.ek.monthlyEnergyCost, { digits: 0 })} kr`} />
+                    <PDFCompareRow liten={kompakt} k="Elkostnad/mån" v={`${Amp.fmt(sc.ek.monthlyEnergyCost, { digits: 0 })} kr`} />
                   )}
                   {sc.ek && sc.ek.monthlyPowerCost > 0 && (
-                    <PDFCompareRow k="Effektavgift/mån" v={`${Amp.fmt(sc.ek.monthlyPowerCost, { digits: 0 })} kr`} />
+                    <PDFCompareRow liten={kompakt} k="Effektavgift/mån" v={`${Amp.fmt(sc.ek.monthlyPowerCost, { digits: 0 })} kr`} />
                   )}
                   {/* Laddintäkt och driftnetto. Utan dem visade korten bara
                       kostnad, som växer med anläggningens storlek — rapporten
                       rangordnade alltså alternativen omvänt mot lönsamheten. */}
                   {sc.ek && sc.ek.monthlyRevenue > 0 && (
-                    <PDFCompareRow k="Laddintäkt/mån" v={`${Amp.fmt(sc.ek.monthlyRevenue, { digits: 0 })} kr`} />
+                    <PDFCompareRow liten={kompakt} k="Laddintäkt/mån" v={`${Amp.fmt(sc.ek.monthlyRevenue, { digits: 0 })} kr`} />
                   )}
                   {sc.ek && sc.ek.monthlyRevenue > 0 && (
-                    <PDFCompareRow
-                      k="Driftnetto/mån"
+                    <PDFCompareRow liten={kompakt} k="Driftnetto/mån"
                       v={`${sc.ek.monthlyNet >= 0 ? '+' : '−'}${Amp.fmt(Math.abs(sc.ek.monthlyNet), { digits: 0 })} kr`}
                       highlight={sc.ek.monthlyNet < 0 ? BRAND.accentDeep : undefined} />
                   )}
@@ -897,7 +951,7 @@ function PDFCompare({ data }) {
       <div style={{ margin: tatt ? '16px 56px 0' : '24px 56px 0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: tatt ? 20 : 28, borderTop: `1px solid ${BRAND.line}`, paddingTop: tatt ? 12 : 18 }}>
         <div>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: tatt ? 5 : 8 }}>Beräkningsmetod</div>
-          <div style={{ fontSize: tatt ? 9 : 10, lineHeight: tatt ? 1.4 : 1.55, color: BRAND.ink2 }}>
+          <div style={{ fontSize: mycketTatt ? 8.5 : (tatt ? 9 : 10), lineHeight: mycketTatt ? 1.32 : (tatt ? 1.4 : 1.55), color: BRAND.ink2 }}>
             Av bilarna som står på en plats en viss timme antas en andel
             1/parkeringstiden ha anlänt just då, faltat med parkeringstidsfönstret.
             Kurvan skalas så att antalet bilplatstimmar per dygn matchar vald
@@ -908,7 +962,7 @@ function PDFCompare({ data }) {
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: tatt ? 5 : 8 }}>Konstanter</div>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: mycketTatt ? 3 : (tatt ? 5 : 8) }}>Konstanter</div>
           <div style={{ fontSize: tatt ? 9 : 10, lineHeight: tatt ? 1.4 : 1.55, color: BRAND.ink2 }}>
             SmartHub: {data.const.capPerHub} kW max simultan effekt, {data.const.outletsPerHub} uttag
             och {Amp.MAX_SESSIONS_PER_HUB} simultana laddsessioner per hub.
@@ -929,9 +983,9 @@ function PDFCompare({ data }) {
           att installationen kräver behörig elinstallatör. Samma mönster som
           resten av granskningen: en fix i den ena mallen, aldrig i den andra.
           Komprimerad formulering — sidan är en enda och redan välfylld. */}
-      <div style={{ margin: tatt ? '10px 56px 0' : '14px 56px 0', paddingTop: tatt ? 7 : 10, borderTop: `1px solid ${BRAND.line}` }}>
-        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: tatt ? 4 : 6 }}>Ansvar &amp; risker</div>
-        <div style={{ fontSize: tatt ? 8.5 : 9.5, lineHeight: tatt ? 1.4 : 1.5, color: BRAND.ink2 }}>
+      <div style={{ margin: mycketTatt ? '6px 56px 0' : (tatt ? '10px 56px 0' : '14px 56px 0'), paddingTop: mycketTatt ? 5 : (tatt ? 7 : 10), borderTop: `1px solid ${BRAND.line}` }}>
+        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: mycketTatt ? 3 : (tatt ? 4 : 6) }}>Ansvar &amp; risker</div>
+        <div style={{ fontSize: mycketTatt ? 8 : (tatt ? 8.5 : 9.5), lineHeight: mycketTatt ? 1.32 : (tatt ? 1.4 : 1.5), color: BRAND.ink2 }}>
           Siffrorna är modellberäkningar på era indata och ersätter inte projektering
           eller bindande offert från nätägaren. Verkligt utfall styrs av fordonsmix,
           årstid och faktiskt laddbeteende. Priser exkl. moms; servisutökning ingår ej.
@@ -944,15 +998,20 @@ function PDFCompare({ data }) {
   );
 }
 
-function PDFCompareRow({ k, v, highlight }) {
+// `liten` används från fem kort och uppåt. Då är kortet ~107 px brett, och
+// etiketter som "Laddn./uttag·dygn" radbröts — varje brytning kostade 13 px på
+// en sida som redan var full, och med sex kort växte den till 1208 px mot taket
+// 1123. Raderna hålls därför på EN rad: mindre text, och etiketten kortas med
+// ellips i stället för att bryta. Värdet kortas aldrig.
+function PDFCompareRow({ k, v, highlight, liten }) {
   return (
     <div style={{
-      display: 'flex', justifyContent: 'space-between',
-      fontSize: 9.5, padding: '3px 0',
+      display: 'flex', justifyContent: 'space-between', gap: 4,
+      fontSize: liten ? 8 : 9.5, padding: liten ? '2px 0' : '3px 0',
       borderBottom: `1px solid ${BRAND.lineSoft}`,
     }}>
-      <span style={{ color: BRAND.mute }}>{k}</span>
-      <span style={{ color: highlight || BRAND.ink, fontFamily: BRAND.mono }}>{v}</span>
+      <span style={{ color: BRAND.mute, minWidth: 0, whiteSpace: liten ? 'nowrap' : 'normal', overflow: 'hidden', textOverflow: 'ellipsis' }}>{k}</span>
+      <span style={{ color: highlight || BRAND.ink, fontFamily: BRAND.mono, whiteSpace: 'nowrap' }}>{v}</span>
     </div>
   );
 }
@@ -1187,7 +1246,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.9.4',
+      version: '3.9.5',
     },
   };
 }
