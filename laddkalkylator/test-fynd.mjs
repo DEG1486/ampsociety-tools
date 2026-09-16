@@ -615,6 +615,12 @@ lagg('enkelt läge', 'UI:t frågar efter platser och svarar i km', () => {
   // fysiskt omöjligt (922 km, granskningen 2026-09-12). Varningen är enda
   // spärren mot det i den här vyn.
   if (!/schablonBatteri\(\)/.test(VARIANT)) fel.push('batterivarningen saknas i enkla läget');
+  // Baslasten ska INTE dras av i enkla läget (Daniel 2026-09-16: "Har vi 63A så
+  // räkna med 44kW"). Avancerats 20 %-schablon åt en femtedel av anslutningen
+  // innan något räknats — 63 A blev 31 kW, ett tal kunden inte kan stämma av mot
+  // något de känner igen. Faller om p.existingLoadPct kopplas in igen.
+  if (!/C\.computeSimple\(\{[^}]*existingLoadPct: 0,/.test(VARIANT))
+    fel.push('enkla läget drar av en baslast igen — ska dimensionera mot HELA servisen');
   for (const k of ['brf', 'office', 'mall', 'garage']) {
     if (!new RegExp(k + ":\\s*\\{[^}]*profileKey:").test(VARIANT)) fel.push(`PROPERTY_PRESETS.${k} saknas`);
   }

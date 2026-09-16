@@ -206,13 +206,59 @@ for (const lage of LAGEN) {
     const e3 = await matt(etikett);
     const tgbOk = e2.v === r.max || Math.abs(e3.v - (e2.v + r.step)) < 1e-6;
 
-    const allt = dragOk && klickOk && puckOk && tgbOk;
+    // 5) DRAGNING UTAN POINTER CAPTURE — den enda mätning som reproducerade
+    // Daniels fel 2026-09-16 ("slidern fungerar varken i Chrome eller Edge").
+    //
+    // v3.9.4 la hela dragningen på setPointerCapture: `onPointerMove` gör
+    // ingenting om inte `hasPointerCapture` är sann. Tas capture inte — av
+    // vilket skäl som helst i en viss webbläsare eller pekartyp — fungerar
+    // nedtryckning (klick) men INTE dragning. Allt annat i den här sviten var
+    // grönt hela tiden, i båda webbläsarna och mot den publicerade sajten,
+    // eftersom CDP:s riktiga pekare alltid FÅR capture.
+    //
+    // Syntetiska PointerEvents kan aldrig ta capture, så de simulerar exakt det
+    // felläget. Före fixen: 25 rörelser gav 1 värdeändring och reglaget stannade
+    // på 3 av ~110. Efter: 25 av 25.
+    const utanCapture = await js(`(async () => {
+      const inp = document.querySelector('input[type=range][aria-label=${JSON.stringify(etikett)}]');
+      if (!inp) return { fel: 'hittade inte reglaget' };
+      const spar = inp.parentElement;
+      const b = spar.getBoundingClientRect();
+      const y = b.top + b.height / 2;
+      const ev = (typ, x, knapp) => spar.dispatchEvent(new PointerEvent(typ, {
+        pointerId: 991, bubbles: true, clientX: x, clientY: y,
+        buttons: knapp ? 1 : 0, isPrimary: true,
+      }));
+      const start = Number(inp.value);
+      ev('pointerdown', b.left + b.width * 0.08, true);
+      const hadeCapture = spar.hasPointerCapture ? spar.hasPointerCapture(991) : null;
+      let andringar = 0, forra = Number(inp.value);
+      for (let i = 1; i <= 20; i++) {
+        ev('pointermove', b.left + b.width * (0.08 + 0.042 * i), true);
+        await new Promise((r) => setTimeout(r, 25));
+        const nu = Number(inp.value);
+        if (nu !== forra) { andringar++; forra = nu; }
+      }
+      ev('pointerup', b.right - b.width * 0.08, false);
+      await new Promise((r) => setTimeout(r, 60));
+      return { start, slut: Number(inp.value), andringar, hadeCapture, max: Number(inp.max) };
+    })()`);
+    // Kravet: dragningen ska röra värdet flera gånger och landa långt från
+    // startpunkten, ÄVEN när capture uteblev. Ett reglage som bara hoppar vid
+    // nedtryck ger andringar = 0.
+    const utanCaptureOk = !utanCapture.fel
+      && utanCapture.andringar >= 5
+      && Math.abs(utanCapture.slut - utanCapture.start) > (r.max - r.min) * 0.3;
+
+
+    const allt = dragOk && klickOk && puckOk && tgbOk && utanCaptureOk;
     if (!allt) fel++;
     console.log(`    ${allt ? 'OK  ' : 'FEL '} ${etikett.padEnd(18)}`
       + ` drag ${efterNed}→${e1.v} (väntat ${vidX(x1)})${dragOk ? '' : ' <-FEL'}`
       + ` · klick ${e2.v} (väntat ${vidX(xk)})${klickOk ? '' : ' <-FEL'}`
       + ` · puck ${puckFel.toFixed(1)} px av ${halvtSteg.toFixed(1)}${puckOk ? '' : ' <-FEL'}`
-      + ` · pil ${e2.v}→${e3.v}${tgbOk ? '' : ' <-FEL'}`);
+      + ` · pil ${e2.v}→${e3.v}${tgbOk ? '' : ' <-FEL'}`
+      + ` · u.capture ${utanCapture.andringar ?? '-'} ändr, ${utanCapture.start ?? '-'}→${utanCapture.slut ?? '-'}${utanCaptureOk ? '' : ' <-FEL'}`);
   }
 }
 

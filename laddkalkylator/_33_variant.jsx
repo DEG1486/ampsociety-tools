@@ -807,9 +807,17 @@ function SimpleMode(p) {
   const C = window.Amp5Calc;
   const profile = C.PROFILES[p.profileKey] || C.PROFILES.office;
 
+  // BASLASTEN ÄR NOLL HÄR, MED FLIT (Daniel 2026-09-16: "I det enkla läget så
+  // skippar vi baslasten. Har vi 63A så räkna med 44kW osv!").
+  //
+  // Avancerats 20 %-schablon är ett antagande kunden aldrig gjort, och den åt en
+  // femtedel av anslutningen innan något räknats: 63 A blev 44 → 35 → 31 kW, och
+  // "31 kW" bredvid "63 A" går inte att stämma av mot något kunden känner igen.
+  // Enkla läget dimensionerar därför mot HELA servisen. Har fastigheten
+  // betydande grundlast är det ett avancerat samtal — och fältet finns kvar där.
   const res = React.useMemo(() => C.computeSimple({
     fuseSizeA: p.fuseSizeA,
-    existingLoadPct: p.existingLoadPct,
+    existingLoadPct: 0,
     outlets: p.outlets,
     parkingHours: p.parkingHours,
     profileHours: profile.hours,
@@ -819,7 +827,7 @@ function SimpleMode(p) {
     efficiency: p.efficiency,
     strategy: p.strategy,
     profileLabel: profile.label,
-  }), [p.fuseSizeA, p.existingLoadPct, p.outlets, p.parkingHours, p.profileKey,
+  }), [p.fuseSizeA, p.outlets, p.parkingHours, p.profileKey,
        p.peakOcc, p.carAcLimit, p.efficiency, p.strategy]);
 
   const kWh = res.perOutletKWh;
@@ -918,7 +926,7 @@ function SimpleMode(p) {
             <span style={{ color: I.mute }}> ({C.fmt(kWh, { digits: 1 })} kWh per bil)</span>
           </div>
           <div style={{ fontSize: 12.5, color: I.mute, marginTop: 8, fontFamily: I.mono }}>
-            {hubTxt} · {C.fmt(res.systemCapKW, { digits: 0 })} kW mot elnätet · nuvarande säkring räcker
+            {hubTxt} · {C.fmt(res.servisKW, { digits: 0 })} kW anslutning, {C.fmt(res.systemCapKW, { digits: 0 })} kW till laddning
           </div>
 
           {forLite && (
@@ -958,13 +966,15 @@ function SimpleMode(p) {
             Alla {res.outlets} bilar laddar inte samtidigt för full effekt. Amp5 fördelar
             effekten över dygnet och håller anläggningen under taket — det är därför
             {' '}{C.fmt(res.systemCapKW, { digits: 0 })} kW räcker till {res.outlets} platser.
+            De {C.fmt(res.servisKW - res.systemCapKW, { digits: 0 })} kW som inte används är
+            marginalen mot huvudsäkringen ({Math.round(C.GRID_MARGIN * 100)} %).
           </div>
         </div>
 
         <SimpleDetails
           res={res} kWh={kWh} km={km} profil={profile.label}
           parkingHours={p.parkingHours} peakOcc={p.peakOcc}
-          existingLoadPct={p.existingLoadPct} />
+          fuseSizeA={p.fuseSizeA} />
 
         <div style={{
           marginTop: 32, paddingTop: 20, borderTop: '1px solid ' + I.line,
@@ -1069,7 +1079,7 @@ function SimplePlacesSlider({ value, onChange }) {
 
 // Hopfällt. Greta öppnar det aldrig; installatören och den skeptiske
 // styrelseledamoten gör det, och då ska varje tal gå att följa.
-function SimpleDetails({ res, kWh, km, profil, parkingHours, peakOcc, existingLoadPct }) {
+function SimpleDetails({ res, kWh, km, profil, parkingHours, peakOcc, fuseSizeA }) {
   const C = window.Amp5Calc;
   const [open, setOpen] = React.useState(false);
   const rad = (etikett, varde) => (
@@ -1108,17 +1118,18 @@ function SimpleDetails({ res, kWh, km, profil, parkingHours, peakOcc, existingLo
             en anslutning som aldrig kunnat ge dem full effekt samtidigt — de delar på
             effekten över tiden i stället.
           </div>
-          {rad('Elanslutning', C.fmt(res.servisKW, { digits: 1 }) + ' kW')}
-          {rad('Redan använt av fastigheten', C.fmt(res.existingKW, { digits: 1 }) + ' kW  (' + Math.round(existingLoadPct * 100) + ' %)')}
-          {rad('Ledigt för laddning', C.fmt(res.availableKW, { digits: 1 }) + ' kW')}
-          {rad('Effekttak (' + Math.round(C.GRID_MARGIN * 100) + ' % marginal kvar)', C.fmt(res.systemCapKW, { digits: 1 }) + ' kW')}
+          {rad('Elanslutning (' + fuseSizeA + ' A, 3-fas 400 V)', C.fmt(res.servisKW, { digits: 1 }) + ' kW')}
+          {rad('Marginal mot huvudsäkringen', '−' + C.fmt(res.servisKW - res.systemCapKW, { digits: 1 }) + ' kW  (' + Math.round(C.GRID_MARGIN * 100) + ' %)')}
+          {rad('Effekttak för laddningen', C.fmt(res.systemCapKW, { digits: 1 }) + ' kW')}
           {rad('SmartHubs', res.hubs + ' × ' + C.CAP_PER_HUB_KW + ' kW')}
           {rad('Laddplatser', res.outlets + ' st')}
           {rad('Energi per bil och laddning', C.fmt(kWh, { digits: 1 }) + ' kWh  ≈ ' + km + ' km')}
           <div style={{ fontSize: 11, color: I.mute, lineHeight: 1.6, marginTop: 14 }}>
-            Antaganden ur fastighetstypen: {profil}-profil, {parkingHours} h parkering,
-            {' '}{Math.round(peakOcc * 100)} % beläggning i topptimmen,
-            {' '}{Math.round(existingLoadPct * 100)} % befintlig last. Räckvidden räknas på
+            Hela anslutningen räknas som tillgänglig för laddning — enkla läget antar
+            ingen befintlig grundlast. Har fastigheten betydande last (hiss, tvättstuga,
+            värme) ska den dras av i Avancerat, och då minskar talet ovan.
+            Övriga antaganden ur fastighetstypen: {profil}-profil, {parkingHours} h parkering,
+            {' '}{Math.round(peakOcc * 100)} % beläggning i topptimmen. Räckvidden räknas på
             en genomsnittsbil i katalogen ({C.fmt(schablonKwh100(), { digits: 1 })} kWh/100 km)
             vid verklig förbrukning, inte WLTP — vintertid går det åt 20–40 % mer. Ändra
             vad som helst av detta i Avancerat läge.
@@ -1478,6 +1489,52 @@ function SliderField({ label, value, onChange, min, max, step = 1, suffix, hint,
     try { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
   };
 
+  // DRAGNINGEN FÅR INTE HÄNGA PÅ setPointerCapture ENSAM.
+  //
+  // v3.9.4 löste "går inte att slida, man får klicka längs med axeln" genom att
+  // ta pointer capture på spåret och driva dragningen ur `onPointerMove` med
+  // `hasPointerCapture` som villkor. Det gjorde capture till EN ENDA felkälla
+  // utan reserv: tas den inte — av vilket skäl som helst — fyrar `onPointerMove`
+  // fortfarande, men villkoret är falskt och INGENTING händer. Nedtryckning
+  // (klick) fungerar då, dragning inte. Exakt samma symptom som 2026-09-14, och
+  // Daniel rapporterade det igen 2026-09-16 i både Chrome och Edge.
+  //
+  // Uppmätt med syntetiska pointer-events (som aldrig kan ta capture): 25
+  // rörelser gav 1 värdeändring och reglaget stannade på 3 av ~110. Det synkrona
+  // arbetet i handlern var 0,0 ms — det var alltså ALDRIG ett prestandaproblem,
+  // vilket är vad jag först trodde och mätte i onödan.
+  //
+  // Här ligger dragningen i stället på window så länge draget pågår. Den
+  // fungerar oavsett om capture togs, oavsett om React skulle byta ut noden
+  // mitt i draget, och även när pekaren lämnar elementet. Capture behålls som
+  // komplement — den hjälper när den funkar och skadar aldrig.
+  const dragRef = React.useRef(null);
+  dragRef.current = { value, min, max, step, onChange };
+  const [drar, setDrar] = React.useState(false);
+  React.useEffect(() => {
+    if (!drar) return undefined;
+    const flytta = (e) => {
+      const el = sparRef.current;
+      const d = dragRef.current;
+      if (!el || !d) return;
+      const r = el.getBoundingClientRect();
+      if (!(r.width > 0)) return;
+      const andel = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+      const steg = d.min + Math.round((andel * (d.max - d.min)) / d.step) * d.step;
+      const v = Math.min(d.max, Math.max(d.min, Math.round(steg * 1e6) / 1e6));
+      if (v !== d.value) d.onChange(v);
+    };
+    const upp = () => setDrar(false);
+    window.addEventListener('pointermove', flytta);
+    window.addEventListener('pointerup', upp);
+    window.addEventListener('pointercancel', upp);
+    return () => {
+      window.removeEventListener('pointermove', flytta);
+      window.removeEventListener('pointerup', upp);
+      window.removeEventListener('pointercancel', upp);
+    };
+  }, [drar]);
+
   return (
     <div>
       {!utanRubrik && (
@@ -1496,6 +1553,7 @@ function SliderField({ label, value, onChange, min, max, step = 1, suffix, hint,
           try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
           e.preventDefault();                                        // ingen textmarkering under draget
           if (inputRef.current) inputRef.current.focus({ preventScroll: true });
+          setDrar(true);
           dra(e);
         }}
         onPointerMove={(e) => {
@@ -1503,8 +1561,8 @@ function SliderField({ label, value, onChange, min, max, step = 1, suffix, hint,
           try { dragande = e.currentTarget.hasPointerCapture(e.pointerId); } catch (_) {}
           if (dragande) dra(e);
         }}
-        onPointerUp={slapp}
-        onPointerCancel={slapp}
+        onPointerUp={(e) => { setDrar(false); slapp(e); }}
+        onPointerCancel={(e) => { setDrar(false); slapp(e); }}
         style={{ position: 'relative', height: 36, display: 'flex', alignItems: 'center', touchAction: 'none', cursor: 'pointer' }}>
         <div style={{ position: 'absolute', left: 0, right: 0, height: 4, background: I.line, borderRadius: 2 }} />
         <div style={{ position: 'absolute', left: 0, width: `${pct}%`, height: 4, background: I.ink, borderRadius: 2 }} />
