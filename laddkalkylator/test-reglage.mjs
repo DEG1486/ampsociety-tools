@@ -1,4 +1,4 @@
-// test-reglage.mjs — går reglagen att DRA? Mus och touch, i en riktig webbläsare.
+﻿// test-reglage.mjs — går reglagen att DRA? Mus och touch, i en riktig webbläsare.
 //
 // Kör:  node laddkalkylator/test-reglage.mjs
 //       node laddkalkylator/test-reglage.mjs --touch
@@ -60,7 +60,11 @@ const APP = ADRESS || ('file:///' + encodeURI(path.resolve(FIL).replace(/\\/g, '
 // Lägena sätts via URL-hashen (#k= + base64 av JSON, se decodeCalcState) —
 // snabbare och pålitligare än att klicka sig dit genom UI:t.
 const LAGEN = [
-  { namn: 'enkelt läge', hash: { uiMode: 'simple', mode: 'energy' }, reglage: ['Parkeringstid'] },
+  // Enkla läget har sedan v3.10.0 ETT reglage, och det är inte parkeringstiden:
+  // läget frågar hur långt varje bil ska kunna köra och räknar fram antalet
+  // laddplatser. Rubrikraden är dold (utanRubrik), så aria-label är reglagets
+  // enda namn — går det förlorat är reglaget onåbart för skärmläsare OCH här.
+  { namn: 'enkelt läge', hash: { uiMode: 'simple' }, reglage: ['Räckvidd per laddning'] },
   { namn: 'avancerat',   hash: { uiMode: 'advanced', mode: 'energy' },
     reglage: ['Parkeringstid', 'Peak-beläggning', 'Befintlig last', 'Drift & underhåll'] },
   { namn: 'hubs-läget',  hash: { uiMode: 'advanced', mode: 'hubs' },

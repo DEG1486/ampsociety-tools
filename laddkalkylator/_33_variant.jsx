@@ -8,7 +8,7 @@
 // svaret var att webbläsaren serverade den gamla filen ur cachen (Pages sätter
 // `max-age=600`). Versionen syntes då bara i PDF:en, alltså efter en export.
 // `verifiera-bygge.mjs` jämför den här raden mot literalen i _33_pdf.jsx.
-const APP_VERSION = '3.9.5';
+const APP_VERSION = '3.10.0';
 
 // ───────── PDF export helper ─────────
 function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
@@ -477,6 +477,9 @@ function InstrumentVariant() {
     setParkingHours(preset.parkingHours);
     setPeakOcc(preset.peakOcc);
     setOccPct(preset.occPct);
+    // Enkla lägets tredje fråga har ett svar redan när chippet klickas — Greta
+    // ska se ett tal direkt, inte ett tomt reglage.
+    if (preset.needKWh != null) setSessionNeedKWh(preset.needKWh);
   }, []);
   // F1: Elnät (servissäkring 3-fas 400 V + befintlig last)
   const [fuseSizeA, setFuseSizeA] = React.useState(init.fuseSizeA ?? 63);
@@ -653,6 +656,21 @@ function InstrumentVariant() {
   const heroKWh = mode === 'energy' ? energy.perOutletKWh : sizing.deliveredEnergyPerOutlet;
   const heroRange = C.rangeKm(heroKWh, car.kwh100);
 
+  if (uiMode === 'simple') {
+    return (
+      <SimpleMode
+        propertyType={propertyType} applyPropertyType={applyPropertyType}
+        profileKey={profileKey}
+        fuseSizeA={fuseSizeA} setFuseSizeA={setFuseSizeA}
+        existingLoadPct={existingLoadPct}
+        parkingHours={parkingHours} peakOcc={peakOcc}
+        sessionNeedKWh={sessionNeedKWh} setSessionNeedKWh={setSessionNeedKWh}
+        carAcLimit={carAcLimit} efficiency={efficiency} strategy={strategy}
+        setUiMode={handleSetUiMode}
+      />
+    );
+  }
+
   if (mode === 'compare') {
     return (
       <div className="iv-root" style={{
@@ -741,6 +759,340 @@ function InstrumentVariant() {
           exportAsPdf(data);
         }}
       />
+    </div>
+  );
+}
+
+// ───────── Enkelt läge — EN fråga, ETT svar ─────────
+// "Enkelhet som ledord. Standard skall vara så enkel att Greta 90 år fattar."
+//
+// Läget ställer appens fråga BAKLÄNGES mot de andra två: energi- och hubs-lägena
+// tar antal uttag som indata, det här räknar fram det. Greta vill veta hur många
+// bilar hennes säkring räcker till, inte hur många kWh ett uttag levererar.
+//
+// Vad som medvetet INTE finns här, och varför:
+//   · Elnätsstatus  — räknas platserna UR servisen kan svaret aldrig bli
+//                     "elnätet räcker inte". computePlaces dimensionerar mot
+//                     GRÖN status, så en separat rad hade bara upprepat sig.
+//   · Ekonomi       — säljarens kalkyl, inte Gretas fråga. Ligger i Avancerat.
+//   · Bilval, profil, beläggning, strategi, verkningsgrad — schabloner ur
+//                     fastighetstypen. Alla finns kvar i Avancerat.
+
+// Schablonbil: medelförbrukningen i CARS. EN källa — talet följer katalogen i
+// stället för att bli en literal som glider isär med den (samma skäl som
+// GRID_MARGIN slogs ihop till en källa i v3.8.9). Defaultbilen hade varit fel
+// val: Tesla Model 3 LR går 14,5 kWh/100 km, näst snålast i katalogen, och hade
+// gett Greta ~15 % för långa km-tal.
+function schablonKwh100() {
+  const cars = window.Amp5Calc.CARS;
+  return cars.reduce((a, c) => a + c.kwh100, 0) / cars.length;
+}
+const kwhTillKm = (kwh) => window.Amp5Calc.rangeKm(kwh, schablonKwh100());
+
+function SimpleMode(p) {
+  const C = window.Amp5Calc;
+  const profile = C.PROFILES[p.profileKey] || C.PROFILES.office;
+  const preset = PROPERTY_PRESETS[p.propertyType] || PROPERTY_PRESETS.brf;
+  // Behovet MÅSTE ha ett värde här: "obegränsat" gör frågan meningslös — en bil
+  // som laddar hela natten fyller varje anläggning oavsett storlek.
+  const need = (Number.isFinite(p.sessionNeedKWh) && p.sessionNeedKWh > 0)
+    ? p.sessionNeedKWh : preset.needKWh;
+
+  const res = React.useMemo(() => C.computePlaces({
+    fuseSizeA: p.fuseSizeA,
+    existingLoadPct: p.existingLoadPct,
+    parkingHours: p.parkingHours,
+    profileHours: profile.hours,
+    peakOccupancyPct: p.peakOcc,
+    sessionNeedKWh: need,
+    capPerHub: C.CAP_PER_HUB_KW,
+    hwLimitKW: p.carAcLimit,
+    efficiency: p.efficiency,
+    strategy: p.strategy,
+    profileLabel: profile.label,
+  }), [p.fuseSizeA, p.existingLoadPct, p.parkingHours, p.profileKey, p.peakOcc,
+       need, p.carAcLimit, p.efficiency, p.strategy]);
+
+  const km = Math.round(kwhTillKm(need));
+  const hubTxt = res.hubs === 1 ? '1 SmartHub' : res.hubs + ' SmartHubs';
+  const nattEllerDag = p.profileKey === 'residential' ? 'natt' : 'dag';
+
+  return (
+    <div className="iv-simple" style={{
+      width: '100%', boxSizing: 'border-box', minHeight: '100vh', background: I.bg, color: I.ink,
+      fontFamily: I.sans, display: 'flex', flexDirection: 'column', alignItems: 'center',
+      padding: '36px 24px 64px',
+    }}>
+      <div style={{ width: '100%', maxWidth: 680 }}>
+
+        {/* Huvud */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28, gap: 20 }}>
+          <img src={window.Amp5Assets.logo} alt="AmpSociety" style={{ display: 'block', height: 30, width: 'auto' }} />
+          <button onClick={() => p.setUiMode('advanced')}
+            style={{
+              background: 'transparent', border: '1px solid ' + I.line, color: I.ink2,
+              padding: '7px 13px', borderRadius: 2, cursor: 'pointer',
+              fontFamily: I.mono, fontSize: 10.5, letterSpacing: 1.1, textTransform: 'uppercase',
+            }}>Avancerat läge</button>
+        </div>
+
+        <div style={{ fontFamily: I.serif, fontSize: 44, fontWeight: 500, letterSpacing: -0.8, lineHeight: 1.05, color: I.ink }}>
+          Hur många bilar<br/>kan ni ladda?
+        </div>
+        <div style={{ height: 4, width: 64, background: I.accent, marginTop: 14, marginBottom: 12 }} />
+        <div style={{ fontSize: 13.5, color: I.ink2, lineHeight: 1.55, maxWidth: 520 }}>
+          Svara på tre frågor. Vi räknar fram hur många laddplatser som ryms på
+          er nuvarande elanslutning — utan att den behöver byggas ut.
+        </div>
+
+        {/* 1 — fastighet */}
+        <SimpleStep n="1" title="Vad är det för fastighet?">
+          <div className="iv-simple-chips" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+            {Object.entries(PROPERTY_PRESETS).map(([k, pr]) => {
+              const aktiv = p.propertyType === k;
+              return (
+                <button key={k} onClick={() => p.applyPropertyType(k)}
+                  style={{
+                    background: aktiv ? I.ink : I.surface,
+                    color: aktiv ? I.bg : I.ink,
+                    border: '1px solid ' + (aktiv ? I.ink : I.line),
+                    padding: '14px 16px', borderRadius: 2, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    fontFamily: I.sans, fontSize: 14, fontWeight: 500, textAlign: 'left',
+                    transition: 'background 120ms, border-color 120ms, color 120ms',
+                  }}>
+                  <span style={{ opacity: aktiv ? 1 : 0.65, display: 'flex' }}>{pr.glyph}</span>
+                  {pr.label}
+                </button>
+              );
+            })}
+          </div>
+        </SimpleStep>
+
+        {/* 2 — säkring */}
+        <SimpleStep n="2" title="Hur stor är huvudsäkringen?"
+          hint="Står på elcentralen, eller på elräkningen. Vet ni inte — gissa, det går att ändra.">
+          <SimpleFusePicker value={p.fuseSizeA} onChange={p.setFuseSizeA} />
+        </SimpleStep>
+
+        {/* 3 — behov */}
+        <SimpleStep n="3" title="Hur långt ska varje bil kunna köra?"
+          hint="Per laddtillfälle. En normal svensk bilist kör ungefär 40 km om dagen.">
+          <SimpleRangeSlider valueKWh={need} onChangeKWh={p.setSessionNeedKWh} />
+        </SimpleStep>
+
+        {/* Svaret */}
+        <div style={{
+          marginTop: 40, padding: '32px 32px 28px', background: I.surface,
+          border: '1px solid ' + I.line, borderRadius: 2,
+        }}>
+          <div style={{ fontSize: 13, color: I.mute, marginBottom: 2 }}>Det räcker till</div>
+          {res.feasible ? (
+            <React.Fragment>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
+                <div className="iv-simple-number" style={{
+                  fontFamily: I.serif, fontSize: 132, fontWeight: 500, lineHeight: 0.92,
+                  letterSpacing: -4, color: I.ink, fontFeatureSettings: '"tnum"',
+                }}>{res.places}</div>
+                <div style={{ fontFamily: I.serif, fontSize: 30, fontWeight: 500, color: I.ink, letterSpacing: -0.5 }}>
+                  laddplatser
+                </div>
+              </div>
+              <div style={{ fontSize: 15, color: I.ink2, marginTop: 14, lineHeight: 1.5 }}>
+                Varje bil får sina <strong>{km} km</strong> — samtidigt, varje {nattEllerDag}.
+              </div>
+              <div style={{ fontSize: 12.5, color: I.mute, marginTop: 8, fontFamily: I.mono }}>
+                {hubTxt} · {C.fmt(res.systemCapKW, { digits: 0 })} kW mot elnätet · nuvarande säkring räcker
+              </div>
+            </React.Fragment>
+          ) : (
+            <React.Fragment>
+              <div className="iv-simple-number" style={{
+                fontFamily: I.serif, fontSize: 84, fontWeight: 500, lineHeight: 1,
+                letterSpacing: -2.5, color: I.accentDeep,
+              }}>Inga platser</div>
+              <div style={{ fontSize: 14.5, color: I.ink2, marginTop: 14, lineHeight: 1.55 }}>
+                {C.fmt(res.systemCapKW, { digits: 1 })} kW räcker inte till {km} km på
+                en parkering på {p.parkingHours} timmar. Dra ner sträckan, eller välj
+                en större säkring.
+              </div>
+            </React.Fragment>
+          )}
+        </div>
+
+        {/* Effektprofilen — visar lastbalanseringen i handling */}
+        {res.feasible && (
+          <div style={{ marginTop: 28 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: I.ink, letterSpacing: -0.2 }}>
+                Så används effekten över dygnet
+              </div>
+              <div style={{ fontSize: 12, color: I.mute }}>kW per timme</div>
+            </div>
+            <HourlyChart energy={res.energy} />
+            <div style={{ fontSize: 11.5, color: I.mute, marginTop: 10, lineHeight: 1.55 }}>
+              Alla {res.places} bilar laddar inte samtidigt för full effekt. Amp5 fördelar
+              effekten över dygnet och håller anläggningen under taket — det är därför
+              {' '}{C.fmt(res.systemCapKW, { digits: 0 })} kW räcker till {res.places} platser.
+            </div>
+          </div>
+        )}
+
+        <SimpleDetails
+          res={res} need={need} km={km} profil={profile.label}
+          parkingHours={p.parkingHours} peakOcc={p.peakOcc}
+          existingLoadPct={p.existingLoadPct} />
+
+        <div style={{
+          marginTop: 32, paddingTop: 20, borderTop: '1px solid ' + I.line,
+          fontSize: 11, color: I.mute, lineHeight: 1.6,
+        }}>
+          Modellberäkning för dimensionering — ersätter inte projektering eller bindande
+          offert. Installation kräver behörig elinstallatör enligt ELSÄK-FS.
+          <span style={{ fontFamily: I.mono, marginLeft: 8 }}>Amp5 Laddkalkylator · v{APP_VERSION}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SimpleStep({ n, title, hint, children }) {
+  return (
+    <div style={{ marginTop: 34 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
+        <span style={{
+          fontFamily: I.mono, fontSize: 11, fontWeight: 700, color: I.accent,
+          letterSpacing: 1, minWidth: 16,
+        }}>{n}</span>
+        <span style={{ fontSize: 16.5, fontWeight: 600, color: I.ink, letterSpacing: -0.2 }}>{title}</span>
+      </div>
+      {hint && (
+        <div style={{ fontSize: 12, color: I.mute, lineHeight: 1.5, margin: '0 0 12px 26px' }}>{hint}</div>
+      )}
+      <div style={{ marginLeft: 26, marginTop: hint ? 0 : 12 }}>{children}</div>
+    </div>
+  );
+}
+
+// Fler steg än FusePicker i Avancerat: Greta ska hitta SIN säkring i listan, inte
+// behöva öppna ett "Annan"-fält. Serviseffekten skrivs ut i klartext så att valet
+// går att kontrollera mot elräkningen.
+function SimpleFusePicker({ value, onChange }) {
+  const val = [25, 35, 50, 63, 80, 100, 125, 160, 200, 250];
+  const finns = val.includes(value);
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0,1fr))', gap: 6 }}>
+        {val.map((a) => {
+          const aktiv = finns && value === a;
+          return (
+            <button key={a} onClick={() => onChange(a)}
+              style={{
+                background: aktiv ? I.ink : I.surface,
+                color: aktiv ? I.bg : I.ink,
+                border: '1px solid ' + (aktiv ? I.ink : I.line),
+                padding: '10px 2px', borderRadius: 2, cursor: 'pointer',
+                fontFamily: I.sans, fontSize: 13, fontWeight: 600, textAlign: 'center',
+                transition: 'background 120ms, border-color 120ms, color 120ms',
+              }}>{a} A</button>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11.5, color: I.mute, marginTop: 8, fontFamily: I.mono }}>
+        {!finns && <span style={{ color: I.accentDeep }}>Egen storlek: {value} A · </span>}
+        ≈ {Math.round(Math.sqrt(3) * 400 * value / 1000)} kW total elanslutning
+      </div>
+    </div>
+  );
+}
+
+// Reglaget går i kWh men VISAR km. Rubriken är Gretas enhet, den lilla texten
+// elektrikerns — och eftersom det underliggande värdet aldrig konverteras fram
+// och tillbaka driver de två inte isär.
+function SimpleRangeSlider({ valueKWh, onChangeKWh }) {
+  const km = Math.round(kwhTillKm(valueKWh));
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <span style={{
+          fontFamily: I.serif, fontSize: 40, fontWeight: 500, color: I.ink,
+          letterSpacing: -1, fontFeatureSettings: '"tnum"',
+        }}>{km}</span>
+        <span style={{ fontSize: 16, color: I.ink2 }}>km per laddning</span>
+        <span style={{ fontSize: 12, color: I.mute, fontFamily: I.mono, marginLeft: 'auto' }}>{valueKWh} kWh</span>
+      </div>
+      {/* Pucken är 26 px bred (20 + 3 px ram per sida) och förskjuts -13px, så vid
+          MAX sticker den ut 13 px till höger om spåret. I Avancerat döljs det av
+          vänsterpanelens padding; här ligger reglaget nära sidkanten och gav
+          dokumentet horisontell scroll. Spåret får därför plats åt pucken. */}
+      <div style={{ padding: '0 13px' }}>
+        {/* label finns kvar trots utanRubrik: den blir <input aria-label> och är
+            reglagets enda namn för skärmläsare när rubrikraden döljs. */}
+        <SliderField utanRubrik label="Räckvidd per laddning"
+          value={valueKWh} onChange={onChangeKWh} min={5} max={50} step={1} suffix="kWh" />
+      </div>
+    </div>
+  );
+}
+
+// Hopfällt. Greta öppnar det aldrig; installatören och den skeptiske
+// styrelseledamoten gör det, och då ska varje tal gå att följa.
+function SimpleDetails({ res, need, km, profil, parkingHours, peakOcc, existingLoadPct }) {
+  const C = window.Amp5Calc;
+  const [open, setOpen] = React.useState(false);
+  const rad = (etikett, varde) => (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', gap: 16,
+      padding: '7px 0', borderBottom: '1px solid ' + I.lineSoft,
+    }}>
+      <span style={{ fontSize: 12.5, color: I.ink2 }}>{etikett}</span>
+      <span style={{ fontSize: 12.5, color: I.ink, fontFamily: I.mono, textAlign: 'right' }}>{varde}</span>
+    </div>
+  );
+  return (
+    <div style={{ marginTop: 28 }}>
+      <button onClick={() => setOpen(!open)}
+        style={{
+          background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+          fontFamily: I.mono, fontSize: 11, letterSpacing: 1.1, textTransform: 'uppercase',
+          color: I.ink2, display: 'flex', alignItems: 'center', gap: 7,
+        }}>
+        <span style={{
+          color: I.accent, transform: open ? 'rotate(90deg)' : 'none',
+          transition: 'transform 140ms', display: 'inline-block',
+        }}>▸</span>
+        Så räknar vi
+      </button>
+      {open && (
+        <div style={{
+          marginTop: 14, padding: '18px 20px', background: I.surface,
+          border: '1px solid ' + I.line, borderRadius: 2,
+        }}>
+          <div style={{ fontSize: 12.5, color: I.ink2, lineHeight: 1.65, marginBottom: 16 }}>
+            Anläggningen får ett <strong>effekttak mot elnätet</strong> i stället för en
+            utbyggd servis. SmartHub mäter fastighetens förbrukning och håller laddningen
+            under taket, så att huvudsäkringen aldrig överbelastas (dynamisk
+            lastbalansering, handbok 8.2). Därför kan {res.places} platser installeras på
+            en anslutning som aldrig kunnat ge dem full effekt samtidigt — de delar på
+            effekten över tiden i stället.
+          </div>
+          {rad('Elanslutning', C.fmt(res.servisKW, { digits: 1 }) + ' kW')}
+          {rad('Redan använt av fastigheten', C.fmt(res.existingKW, { digits: 1 }) + ' kW  (' + Math.round(existingLoadPct * 100) + ' %)')}
+          {rad('Ledigt för laddning', C.fmt(res.availableKW, { digits: 1 }) + ' kW')}
+          {rad('Effekttak (' + Math.round(C.GRID_MARGIN * 100) + ' % marginal kvar)', C.fmt(res.systemCapKW, { digits: 1 }) + ' kW')}
+          {rad('SmartHubs', res.hubs + ' × ' + C.CAP_PER_HUB_KW + ' kW')}
+          {rad('Energi per bil och laddning', C.fmt(need, { digits: 1 }) + ' kWh  ≈ ' + km + ' km')}
+          {rad('Laddplatser som ryms', res.places + ' st')}
+          <div style={{ fontSize: 11, color: I.mute, lineHeight: 1.6, marginTop: 14 }}>
+            Antaganden ur fastighetstypen: {profil}-profil, {parkingHours} h parkering,
+            {' '}{Math.round(peakOcc * 100)} % beläggning i topptimmen,
+            {' '}{Math.round(existingLoadPct * 100)} % befintlig last. Räckvidden räknas på
+            en genomsnittsbil i katalogen ({C.fmt(schablonKwh100(), { digits: 1 })} kWh/100 km)
+            vid verklig förbrukning, inte WLTP — vintertid går det åt 20–40 % mer. Ändra
+            vad som helst av detta i Avancerat läge.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1071,7 +1423,7 @@ function NumberField({
 //
 // <input> är kvar, men bara för tangentbord och skärmläsare (piltangenter,
 // Home/End, aria) — den tar inga pekarhändelser alls.
-function SliderField({ label, value, onChange, min, max, step = 1, suffix, hint }) {
+function SliderField({ label, value, onChange, min, max, step = 1, suffix, hint, utanRubrik }) {
   const pct = ((value - min) / (max - min)) * 100;
   const sparRef = React.useRef(null);
   const inputRef = React.useRef(null);
@@ -1096,12 +1448,14 @@ function SliderField({ label, value, onChange, min, max, step = 1, suffix, hint 
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-        <label style={{ fontSize: 13, color: I.ink2 }}>{label}</label>
-        <div style={{ fontFamily: I.mono, fontSize: 14, color: I.ink, fontFeatureSettings: '"tnum"' }}>
-          {value}<span style={{ color: I.mute, fontSize: 11, marginLeft: 3 }}>{suffix}</span>
+      {!utanRubrik && (
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+          <label style={{ fontSize: 13, color: I.ink2 }}>{label}</label>
+          <div style={{ fontFamily: I.mono, fontSize: 14, color: I.ink, fontFeatureSettings: '"tnum"' }}>
+            {value}<span style={{ color: I.mute, fontSize: 11, marginLeft: 3 }}>{suffix}</span>
+          </div>
         </div>
-      </div>
+      )}
       {/* Större klickyta (36px) + tjockare track + större puck = lättare att träffa */}
       <div
         ref={sparRef}
@@ -1232,11 +1586,19 @@ function StrategyPicker({ value, onChange }) {
 }
 
 // ───────── Enkel/Avancerad — fastighetstyp-presets ─────────
+// needKWh — schablonbehov per laddtillfälle, enkla lägets utgångspunkt. Det är
+// reglaget Greta drar i (visat som km), och det ENDA fältet här som inte redan
+// fanns. Talen är satta efter parkeringstiden och vad besöket rimligen ska räcka
+// till: en natt hemma fyller på en dagsförbrukning med marginal, ett
+// köpcentrumbesök på tre timmar gör det inte.
+// OBS: needKWh ingår MED FLIT inte i matchPropertyType — annars hade chippet
+// slocknat så fort någon rörde km-reglaget, vilket ser ut som att fastighetstypen
+// glömts bort.
 const PROPERTY_PRESETS = {
-  brf:    { label: 'BRF / bostad',  profileKey: 'residential', parkingHours: 10, peakOcc: 0.85, occPct: 0.85 },
-  office: { label: 'Kontor',        profileKey: 'office',      parkingHours: 9,  peakOcc: 0.85, occPct: 0.75 },
-  mall:   { label: 'Köpcentrum',    profileKey: 'mall',        parkingHours: 3,  peakOcc: 0.85, occPct: 0.60 },
-  garage: { label: 'Parkeringshus', profileKey: 'flat',        parkingHours: 6,  peakOcc: 0.60, occPct: 0.55 },
+  brf:    { label: 'BRF / bostad',  profileKey: 'residential', parkingHours: 10, peakOcc: 0.85, occPct: 0.85, needKWh: 20, glyph: <GlyphHome /> },
+  office: { label: 'Kontor',        profileKey: 'office',      parkingHours: 9,  peakOcc: 0.85, occPct: 0.75, needKWh: 15, glyph: <GlyphOffice /> },
+  mall:   { label: 'Köpcentrum',    profileKey: 'mall',        parkingHours: 3,  peakOcc: 0.85, occPct: 0.60, needKWh: 10, glyph: <GlyphMall /> },
+  garage: { label: 'Parkeringshus', profileKey: 'flat',        parkingHours: 6,  peakOcc: 0.60, occPct: 0.55, needKWh: 15, glyph: <GlyphFlat /> },
 };
 
 // Härled vald fastighetstyp ur faktiska värden — så chippen aldrig "ljuger" om
@@ -1285,7 +1647,10 @@ function PropertyTypePicker({ value, onChange }) {
 
 function UiModeToggle({ value, onChange }) {
   const opts = [
-    { k: 'simple',   t: 'Enkel',     s: 'Grundläggande inställningar' },
+    // Undertexten beskrev tidigare enkla läget som "grundläggande inställningar",
+    // vilket stämde när det var samma vy med färre fält. Sedan v3.10.0 ställer det
+    // en ANNAN fråga, och då ska knappen säga vilken.
+    { k: 'simple',   t: 'Enkel',     s: 'Hur många platser ryms?' },
     { k: 'advanced', t: 'Avancerad', s: 'Full kontroll' },
   ];
   return (
@@ -2465,6 +2830,9 @@ function SectionTitle({ title, hint }) {
 function HourlyChart({ energy }) {
   const C = window.Amp5Calc;
   const cap = energy.effectiveCap;
+  // Binder ett angivet effekttak i stället för hubbarnas märkeffekt? Då är
+  // "Hub-tak" fel namn på strecket — det är fastighetens/elnätets tak.
+  const takEtikett = (energy.installedCap > cap + 0.01) ? 'Effekttak' : 'Hub-tak';
   const demand = energy.hourlyDemand || energy.hourly;
   const yMax = Math.max(energy.peakDemandKW, cap, 1) * 1.05;
   const capPct = (cap / yMax) * 100;
@@ -2487,7 +2855,7 @@ function HourlyChart({ energy }) {
         {(energy.peakReductionKW || 0) >= 0.5 && (
           <Stat small label="Reduktion" value={`−${C.fmt(energy.peakReductionKW, {digits: 0})} kW`} />
         )}
-        <Stat small label="Hub-tak" value={`${C.fmt(cap, {digits: 0})} kW`} />
+        <Stat small label={takEtikett} value={`${C.fmt(cap, {digits: 0})} kW`} />
       </div>
       <div style={{ position: 'relative', height: 160, display: 'flex', alignItems: 'flex-end', gap: 3 }}>
         <div style={{
@@ -2536,7 +2904,7 @@ function HourlyChart({ energy }) {
       <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 10, color: I.mute, flexWrap: 'wrap' }}>
         <LegendSwatch color={I.ink} label="SmartHub levererat" />
         <LegendSwatch color={demandFarg} label={harKapat ? 'Okontrollerad efterfrågan (kapas)' : 'Okontrollerad efterfrågan'} />
-        <LegendSwatch color={I.accent} dashed label="Hub-tak" />
+        <LegendSwatch color={I.accent} dashed label={takEtikett} />
       </div>
     </div>
   );
