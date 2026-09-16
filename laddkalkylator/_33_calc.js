@@ -1196,9 +1196,21 @@
   }
 
 
-  // --- F3: Hur många laddplatser ryms på servisen? -----------------------
-  // Enkla lägets enda fråga, ställd baklänges mot resten av appen: energi- och
-  // hubs-lägena tar ANTAL UTTAG som indata, det här läget räknar fram det.
+  // --- F3: Enkla lägets beräkning ----------------------------------------
+  // Frågan: kunden har N parkeringsplatser och en viss huvudsäkring — hur
+  // långt kan varje bil köra på en laddning?
+  //
+  // RIKTNINGEN ÄR VALD, INTE GIVEN. Första versionen (v3.10.0) gick åt andra
+  // hållet: ange energibehov, få antal platser. Daniel vände på den, och skälet
+  // är starkare än det första: en BRF VET att garaget har 40 platser. Ingen vet
+  // hur långt de boende kör. Man ska mata in det man känner till och få ut det
+  // man undrar över.
+  //
+  // Vändningen är också 10-20× snabbare, och det visade sig vara skillnaden
+  // mellan ett reglage som går att dra och ett som inte gör det. Sökningen
+  // bakåt krävde ~18 computeEnergy-anrop (11-26 ms) FÖR VARJE dragsteg; vid
+  // 60 Hz har webbläsaren 16 ms per bildruta, så pucken hakade upp sig i både
+  // Chrome och Edge. Framlänges är det ETT anrop på 1,4 ms.
   //
   // MODELLVALET SOM GÖR FRÅGAN BESVARBAR — läs det här innan någon "rättar"
   // systemCap-raden nedan:
@@ -1206,10 +1218,9 @@
   // Elnätsbedömningen dimensionerar sedan v3.9.0 (granskningsfynd B1) mot vad
   // anläggningen KAN dra, alltså hubbarnas märkeffekt — inte mot en modellerad
   // topp som följer av ett beläggningsantagande. Det är rätt för en anläggning
-  // utan effektstyrning, men det gör frågan "hur många platser ryms?" omöjlig
-  // att besvara positivt: en enda SmartHub på 44 kW spränger redan en 63 A-servis
-  // med 20 % grundlast (34,9 kW tillgängligt), så svaret hade blivit NOLL
-  // platser för appens allra vanligaste kundfall.
+  // utan effektstyrning, men det gör enkla lägets fråga obesvarbar: en enda
+  // SmartHub à 44 kW spränger redan en 63 A-servis med 20 % grundlast
+  // (34,9 kW tillgängligt). Varje svar hade börjat med "servisutökning krävs".
   //
   // Svaret är inte att mjuka upp elnätsbedömningen utan att använda produkten:
   // med ett konfigurerat fastighetseffekttak, eller dynamisk lastbalansering mot
@@ -1221,101 +1232,61 @@
   //     systemCap = tillgänglig effekt × (1 − GRID_MARGIN)
   //
   // Faktorn (1 − GRID_MARGIN) gör att resultatet landar på GRÖN elnätsstatus,
-  // inte 'marginal'. Utan den hade enkla läget svarat "42 platser" medan
-  // Avancerat visat orange rubrik för samma anläggning — och paritet mellan
-  // vyerna är projektets vanligaste felklass (G1, G7).
+  // inte 'marginal'. Utan den hade enkla läget tigit om elnätet medan Avancerat
+  // visade orange rubrik för samma anläggning — och paritet mellan vyerna är
+  // projektets vanligaste felklass (G1, G7).
   //
   // inputs:
   //   fuseSizeA        — servissäkring (A), 3-fas 400 V
   //   existingLoadPct  — andel av servisen som redan är belastad (0–1)
+  //   outlets          — antal laddplatser kunden har/vill ha. DET HÄR är
+  //                      reglaget användaren drar i.
   //   parkingHours     — typisk parkeringstid (h)
   //   profileHours     — närvaroprofil, 24 värden (PROFILES[x].hours)
   //   peakOccupancyPct — beläggningsgrad i profilens topp (0–1)
-  //   sessionNeedKWh   — schablonbehov per bil och laddtillfälle (kWh). DET HÄR
-  //                      är reglaget användaren drar i: mer energi per bil ⇒
-  //                      färre platser. Utan ett behov är frågan meningslös —
-  //                      obegränsat behov fyller varje anläggning oavsett storlek.
-  //   maxPlaces        — sökningens tak (default 500, samma som UI:ts uttagsfält)
-  function computePlaces(inp) {
+  function computeSimple(inp) {
     const num = (v, d) => (Number.isFinite(v) ? v : d);
     const fuse = Math.max(1, num(inp.fuseSizeA, 63));
     const servisKW = (Math.sqrt(3) * 400 * fuse) / 1000;
     const existingPct = Math.max(0, Math.min(0.99, num(inp.existingLoadPct, 0)));
-    const availableKW = servisKW - servisKW * existingPct;
+    const existingKW = servisKW * existingPct;
+    const availableKW = servisKW - existingKW;
     const systemCapKW = availableKW * (1 - GRID_MARGIN);
 
     const capPerHub = Math.min(CAP_PER_HUB_KW, Math.max(1, num(inp.capPerHub, CAP_PER_HUB_KW)));
     const occ = Math.max(0, Math.min(1, num(inp.peakOccupancyPct, 0)));
-    // Behov under 0,1 kWh tolkas som "inget angivet" — samma tröskel som
-    // computeEnergy använder, så en decimal inte vippar utfallet.
-    const needKWh = Math.max(0.1, num(inp.sessionNeedKWh, 10));
-    const maxPlaces = Math.max(1, Math.floor(num(inp.maxPlaces, 500)));
+    const outlets = Math.max(1, Math.floor(num(inp.outlets, 1)));
 
-    // Hubbar följer EFFEKTEN servisen bär, inte bara uttagsantalet. Med enbart
+    // Hubbarna följer EFFEKTEN servisen bär, inte bara uttagsantalet. Med enbart
     // autoräkningen (ceil(n / 54)) blev en ensam hub à 44 kW taket långt innan
-    // servisen var slut: 125 A gav inte fler platser än 100 A, och 250 A inte
-    // fler än 100 A. En installatör köper så många hubbar som servisen bär.
-    const hubsFor = (n) => Math.max(
+    // servisen var slut: en 250 A-servis hade levererat lika lite som en 100 A.
+    // En installatör köper så många hubbar som servisen bär.
+    const hubs = Math.max(
       1,
-      Math.ceil(systemCapKW / capPerHub),                // utnyttja servisen
-      Math.ceil(n / OUTLETS_PER_HUB),                    // fysiska uttag (54/hub)
-      Math.ceil((n * occ) / MAX_SESSIONS_PER_HUB),       // simultana sessioner (30/hub)
+      Math.ceil(systemCapKW / capPerHub),                 // utnyttja servisen
+      Math.ceil(outlets / OUTLETS_PER_HUB),               // fysiska uttag (54/hub)
+      Math.ceil((outlets * occ) / MAX_SESSIONS_PER_HUB),  // simultana sessioner (30/hub)
     );
 
-    const kor = (n) => computeEnergy({
-      outlets: n,
-      hubs: hubsFor(n),
-      capPerHub,
-      systemCap: systemCapKW,
+    // Inget sessionNeedKWh: läget FRÅGAR vad bilen hinner få, så ett tak på
+    // svaret vore att svara på sin egen fråga. Bilens AC-tak och parkeringstiden
+    // begränsar ändå, och orimligt stora värden flaggas mot batteriet i UI:t
+    // precis som i de andra lägena.
+    const energy = computeEnergy({
+      outlets, hubs, capPerHub, systemCap: systemCapKW,
       parkingHours: inp.parkingHours,
       profileHours: inp.profileHours,
       peakOccupancyPct: occ,
       hwLimitKW: inp.hwLimitKW,
       efficiency: inp.efficiency,
       strategy: inp.strategy,
-      sessionNeedKWh: needKWh,
       profileLabel: inp.profileLabel,
     });
 
-    // Behovet mött? perOutletKWh är golvat av sessionNeedKWh uppåt, så det här
-    // är ett ja/nej: får varje laddtillfälle den energi schablonen lovar?
-    const motta = (n) => kor(n).perOutletKWh >= needKWh - 1e-6;
-
-    // Binärsökning. Monotoniciteten som gör den giltig: effectiveCap är KONSTANT
-    // = systemCapKW för alla n (hubsFor garanterar installedCap ≥ systemCapKW),
-    // så den totala energin är oberoende av n medan antalet mottagare växer —
-    // energin per plats faller alltså monotont. Verifierat mot linjär sökning
-    // över hela svepet i test-fynd.mjs; ändras hubsFor måste det svepet köras om.
-    if (!motta(1)) {
-      const e = kor(1);
-      return {
-        places: 0, hubs: hubsFor(1), systemCapKW, availableKW, servisKW, existingKW: servisKW * existingPct,
-        perOutletKWh: e.perOutletKWh, needKWh, feasible: false, limitedBy: 'power', energy: e,
-      };
-    }
-    let lo = 1, hi = 2;
-    while (hi <= maxPlaces && motta(hi)) { lo = hi; hi *= 2; }
-    hi = Math.min(hi, maxPlaces + 1);
-    while (lo + 1 < hi) {
-      const mid = (lo + hi) >> 1;
-      if (motta(mid)) lo = mid; else hi = mid;
-    }
-
-    const energy = kor(lo);
-    const hubs = hubsFor(lo);
-    // Vad band? Effekten är normalfallet; uttags- och sessionstaken binder bara
-    // när servisen är så stor att hårdvaran tar slut före den.
-    const limitedBy = lo >= maxPlaces
-      ? 'sokTak'
-      : (Math.ceil((lo + 1) * occ / MAX_SESSIONS_PER_HUB) > Math.ceil(systemCapKW / capPerHub)
-          ? 'sessions'
-          : 'power');
-
     return {
-      places: lo, hubs, systemCapKW, availableKW, servisKW,
-      existingKW: servisKW * existingPct,
-      perOutletKWh: energy.perOutletKWh, needKWh,
-      feasible: true, limitedBy, energy,
+      outlets, hubs, systemCapKW, availableKW, servisKW, existingKW,
+      perOutletKWh: energy.perOutletKWh,
+      energy,
     };
   }
 
@@ -1353,7 +1324,7 @@
     allocatePower, ampsToKW, isThreePhase,
     PROFILES, CARS,
     computeEnergy, computeHubs, computeGridAssessment, computeEconomics,
-    computePlaces,
+    computeSimple,
     fmt, rangeKm, mean, sum,
   };
 })();

@@ -462,180 +462,161 @@ lagg('A5', 'lasten i beläggningstoppen redovisas bredvid folk-siffrorna', () =>
 // =========================================================================
 // Kör
 // =========================================================================
-// ENKELT LÄGE — computePlaces (v3.10.0)
+// ENKELT LÄGE — computeSimple (v3.10.0)
 // =========================================================================
-// Funktionen svarar på enkla lägets enda fråga: hur många laddplatser ryms på
-// servisen? Den har inget skyddsnät i invariantsviten (som bara kör
-// computeEnergy), och den kan gå sönder TYST: ett fel i systemCap-formeln
-// ändrar bara ett tal, och 25 platser ser lika rimligt ut som 30.
-//
-// Det stora svepet kördes en gång vid införandet — 84 240 konfigurationer, noll
-// avvikelser mellan binärsökning och linjär sökning, noll fall där resultatets
-// elnätsstatus blev något annat än 'ok'. Spärrarna här är ett mindre svep av
-// samma kontroller, snabbt nog att köras före varje commit.
+// Funktionen svarar på enkla lägets fråga: kunden har N platser och en viss
+// huvudsäkring — hur långt kan varje bil köra? Den har inget skyddsnät i
+// invariantsviten (som bara kör computeEnergy), och den kan gå sönder TYST:
+// ett fel i systemCap-formeln ändrar bara ett tal, och 70 km ser lika rimligt
+// ut som 85.
 
-const platser = (o = {}) => C.computePlaces(Object.assign({
-  fuseSizeA: 63, existingLoadPct: 0.20, parkingHours: 10,
+const enkelt = (o = {}) => C.computeSimple(Object.assign({
+  fuseSizeA: 63, existingLoadPct: 0.20, outlets: 20, parkingHours: 10,
   profileHours: C.PROFILES.residential.hours, peakOccupancyPct: 0.85,
-  sessionNeedKWh: 20, capPerHub: 44, hwLimitKW: 11, efficiency: 0.95,
+  capPerHub: 44, hwLimitKW: 11, efficiency: 0.95,
   strategy: 'priority', profileLabel: 'Bostad',
 }, o));
 
-// Svepet körs EN gång och delas mellan spärrarna. computePlaces gör ~18
-// computeEnergy-anrop, så tre spärrar som var för sig svepte 192 fall tog 53
-// sekunder — sviten ska ta sekunder. Det uttömmande svepet (84 240 fall) kördes
-// en gång vid införandet och är dokumenterat i CLAUDE.md; det här är vakten.
-const PLATSSVEP = (() => {
+// 4 profiler × 6 säkringar × 3 laster × 4 tider × 4 platsantal = 1 152 fall.
+// Ett computeEnergy per fall (~1,4 ms), alltså sekunder — inte minuter som den
+// bakvända sökningen krävde.
+const ENKELTSVEP = (() => {
   const ut = [];
-  for (const pk of ['residential', 'mall'])
-  for (const a of [25, 63, 160])
-  for (const last of [0, 0.5])
-  for (const L of [3, 10])
-  for (const behov of [10, 30]) {
+  for (const pk of ['residential', 'office', 'mall', 'flat'])
+  for (const a of [25, 50, 63, 100, 160, 250])
+  for (const last of [0, 0.4, 0.8])
+  for (const L of [1, 3, 10, 24])
+  for (const n of [1, 10, 40, 120]) {
     const inp = {
-      fuseSizeA: a, existingLoadPct: last, parkingHours: L,
+      fuseSizeA: a, existingLoadPct: last, outlets: n, parkingHours: L,
       profileHours: C.PROFILES[pk].hours, peakOccupancyPct: 0.85,
-      sessionNeedKWh: behov, profileLabel: C.PROFILES[pk].label,
+      capPerHub: 44, hwLimitKW: 11, efficiency: 0.95,
+      strategy: 'priority', profileLabel: C.PROFILES[pk].label,
     };
-    ut.push({ pk, a, last, L, behov, inp, r: C.computePlaces(inp) });
+    ut.push({ pk, a, last, L, n, inp, r: C.computeSimple(inp) });
   }
   return ut;
 })();
 
 lagg('enkelt läge', 'svaret ger alltid GRÖN elnätsstatus', () => {
-  // Modellens kärnlöfte. Räknas platserna ur servisen får Avancerat läge aldrig
+  // Modellens kärnlöfte. Sätts effekttaket ur servisen får Avancerat läge aldrig
   // svara "Servisutökning krävs" för samma anläggning — paritet mellan vyerna är
   // projektets vanligaste felklass (G1, G7). Faller om (1 − GRID_MARGIN)-faktorn
-  // i systemCap tas bort, eller om hubsFor slutar följa effekten.
+  // i systemCap tas bort, eller om hubbarna slutar följa effekten.
   const fel = [];
-  for (const f of PLATSSVEP) {
-    const r = f.r;
-    if (!r.feasible) continue;
+  for (const f of ENKELTSVEP) {
     const g = C.computeGridAssessment({
       fuseSizeA: f.a, existingLoadPct: f.last,
-      systemPeakKW: r.energy.peakPowerKW, capPerHub: 44,
-      installedHubs: r.energy.hubs, installedCapKW: r.energy.effectiveCap,
+      systemPeakKW: f.r.energy.peakPowerKW, capPerHub: 44,
+      installedHubs: f.r.energy.hubs, installedCapKW: f.r.energy.effectiveCap,
     });
     if (g.status !== 'ok') {
-      fel.push(`${f.pk} ${f.a}A last=${f.last} L=${f.L} behov=${f.behov}: `
-        + `${r.places} platser men status '${g.status}' (överskott ${g.surplusKW.toFixed(2)} kW)`);
+      fel.push(`${f.pk} ${f.a}A last=${f.last} L=${f.L} n=${f.n}: status '${g.status}' `
+        + `(överskott ${g.surplusKW.toFixed(2)} kW av ${g.availableKW.toFixed(1)} tillgängliga)`);
       if (fel.length > 3) break;
     }
   }
   return fel;
 });
 
-lagg('enkelt läge', 'svaret är maximalt och giltigt', () => {
-  // places ska klara behovet och places+1 ska INTE göra det. Faller om
-  // binärsökningens gränser glider, eller om monotoniciteten bryts så att
-  // sökningen slutar hitta det sanna maximum.
+lagg('enkelt läge', 'fler platser ⇒ aldrig mer energi per bil', () => {
+  // Monotonicitet i det reglage kunden drar i. Bryts den visar UI:t att varje
+  // bil får MER ju fler som delar på samma effekt — ett svar som ser ut som ett
+  // fel för vem som helst, och som skulle dölja hela avvägningen läget finns för.
   const fel = [];
-  const levererar = (n, r, f) => C.computeEnergy({
-    outlets: n,
-    hubs: Math.max(1, Math.ceil(r.systemCapKW / 44),
-      Math.ceil(n / C.OUTLETS_PER_HUB),
-      Math.ceil(n * 0.85 / C.MAX_SESSIONS_PER_HUB)),
-    capPerHub: 44, systemCap: r.systemCapKW,
-    parkingHours: f.L, profileHours: C.PROFILES[f.pk].hours,
-    peakOccupancyPct: 0.85, hwLimitKW: 11, efficiency: 0.95,
-    strategy: 'priority', sessionNeedKWh: f.behov,
-  }).perOutletKWh >= f.behov - 1e-6;
-
-  for (const f of PLATSSVEP) {
-    const r = f.r;
-    // 'sokTak' = anläggningen rymmer fler platser än sökningens tak (500). Där
-    // är svaret taket, inte ett maximum — och places+1 klarar förstås behovet.
-    if (!r.feasible || r.limitedBy === 'sokTak') continue;
-    // Kontrollen kostar två computeEnergy med n uttag, och den blir dyr långt
-    // innan den blir mer intressant: gränsen är knivigast för SMÅ anläggningar,
-    // där ett enda uttag till väger tungt. Utan taket tog sviten 53 s.
-    if (r.places > 80) continue;
-    const namn = `${f.pk} ${f.a}A last=${f.last} L=${f.L} behov=${f.behov}`;
-    if (!levererar(r.places, r, f)) fel.push(`${namn}: ${r.places} platser klarar INTE behovet`);
-    else if (levererar(r.places + 1, r, f)) fel.push(`${namn}: även ${r.places + 1} platser klarar behovet — svaret är för lågt`);
-    if (fel.length > 3) break;
-  }
-  return fel;
-});
-
-lagg('enkelt läge', 'fler platser ⇒ aldrig fler platser vid större behov', () => {
-  // Monotonicitet i det reglage Greta drar i: mer energi per bil kan aldrig ge
-  // FLER platser. Bryts den visar UI:t att man får fler laddplatser genom att
-  // begära mer av varje — ett svar som ser ut som ett fel för vem som helst.
-  const fel = [];
-  for (const a of [25, 63, 160]) for (const L of [3, 10]) {
+  for (const a of [25, 63, 160]) for (const L of [3, 10, 24]) {
     let förra = Infinity;
-    for (const behov of [5, 15, 30, 50]) {
-      const n = platser({ fuseSizeA: a, parkingHours: L, sessionNeedKWh: behov }).places;
-      if (n > förra) fel.push(`${a}A L=${L}: behov ${behov} kWh gav ${n} platser, mer än föregående steg (${förra})`);
-      förra = n;
+    for (const n of [1, 5, 10, 20, 40, 60, 80, 100, 120]) {
+      const kWh = enkelt({ fuseSizeA: a, parkingHours: L, outlets: n }).perOutletKWh;
+      if (kWh > förra + 1e-6) {
+        fel.push(`${a}A L=${L}: ${n} platser gav ${kWh.toFixed(2)} kWh/bil, mer än föregående steg (${förra.toFixed(2)})`);
+      }
+      förra = kWh;
     }
   }
   return fel.slice(0, 4);
 });
 
-lagg('enkelt läge', 'hubbarna räcker för effekttaket', () => {
-  // Hubbantalet ska följa EFFEKTEN servisen bär, inte bara uttagsantalet. Med
-  // enbart autoräkningen (ceil(n / 54)) blev en ensam hub à 44 kW taket långt
-  // innan servisen var slut: 125 A gav inte fler platser än 100 A, och 250 A
-  // inte fler än 100 A. Symtomet var en kurva som planade ut i övre halvan.
+lagg('enkelt läge', 'hubbarna följer effekten, inte bara uttagsantalet', () => {
+  // Med enbart autoräkningen (ceil(n / 54)) blev en ensam hub à 44 kW taket
+  // långt innan servisen var slut: en 250 A-servis levererade inte mer än en
+  // 100 A. Symtomet var ett svar som slutade förbättras när säkringen växte.
   const fel = [];
-  for (const f of PLATSSVEP) {
-    const r = f.r;
-    if (!r.feasible) continue;
-    if (r.hubs * 44 < r.systemCapKW - 1e-6) {
-      fel.push(`${f.pk} ${f.a}A last=${f.last}: ${r.hubs} hubbar (${r.hubs * 44} kW) `
-        + `bär inte effekttaket ${r.systemCapKW.toFixed(1)} kW`);
+  for (const f of ENKELTSVEP) {
+    if (f.r.hubs * 44 < f.r.systemCapKW - 1e-6) {
+      fel.push(`${f.pk} ${f.a}A last=${f.last}: ${f.r.hubs} hubbar (${f.r.hubs * 44} kW) `
+        + `bär inte effekttaket ${f.r.systemCapKW.toFixed(1)} kW`);
       if (fel.length > 3) break;
     }
   }
-  // Och kurvan får inte plana ut: större säkring ska ge fler platser så länge
-  // hårdvaran inte tagit slut.
-  const små = platser({ fuseSizeA: 100 }).places;
-  const stora = platser({ fuseSizeA: 250 }).places;
-  if (stora <= små) fel.push(`250 A gav ${stora} platser, inte fler än 100 A (${små}) — hubbarna följer inte effekten`);
+  // Och svaret får inte plana ut: större säkring ska ge mer per bil så länge
+  // något annat än effekten inte binder (bilens AC-tak, parkeringstiden).
+  const små = enkelt({ fuseSizeA: 63, outlets: 40, parkingHours: 10 }).perOutletKWh;
+  const stora = enkelt({ fuseSizeA: 250, outlets: 40, parkingHours: 10 }).perOutletKWh;
+  if (stora <= små + 1e-6) {
+    fel.push(`250 A gav ${stora.toFixed(1)} kWh/bil, inte mer än 63 A (${små.toFixed(1)}) — hubbarna följer inte effekten`);
+  }
   return fel;
 });
 
 lagg('enkelt läge', 'tål skräp ur URL-hashen', () => {
   // Samma klass som NY-1: fälten kommer ur loadInitialCalcState, som avkodar
-  // godtycklig JSON ur hashen utan validering. NaN i säkringen gav tidigare
-  // NaN rakt genom elnätsbedömningen men status 'marginal' — en självsäker
-  // rubrik utan ett giltigt tal bakom sig.
+  // godtycklig JSON ur hashen utan validering. NaN i säkringen gav tidigare NaN
+  // rakt genom elnätsbedömningen men status 'marginal' — en självsäker rubrik
+  // utan ett giltigt tal bakom sig.
   const fel = [];
-  const skräp = [NaN, Infinity, -5, 0];
-  for (const v of skräp) {
-    for (const falt of ['fuseSizeA', 'existingLoadPct', 'parkingHours', 'peakOccupancyPct', 'sessionNeedKWh']) {
+  for (const v of [NaN, Infinity, -Infinity, undefined, null, -5, 0, 1e9]) {
+    for (const falt of ['fuseSizeA', 'existingLoadPct', 'outlets', 'parkingHours', 'peakOccupancyPct']) {
       let r;
-      try { r = platser({ [falt]: v }); }
+      try { r = enkelt({ [falt]: v }); }
       catch (e) { fel.push(`${falt}=${String(v)} kraschade: ${e.message}`); continue; }
       for (const [k, x] of Object.entries(r)) {
         if (typeof x !== 'number') continue;
         if (!Number.isFinite(x)) { fel.push(`${falt}=${String(v)} gav ${k}=${x}`); break; }
       }
-      if (r.places < 0 || !Number.isInteger(r.places)) fel.push(`${falt}=${String(v)} gav places=${r.places}`);
+      if (r.outlets < 1 || !Number.isInteger(r.outlets)) fel.push(`${falt}=${String(v)} gav outlets=${r.outlets}`);
       if (r.hubs < 1) fel.push(`${falt}=${String(v)} gav hubs=${r.hubs}`);
     }
   }
   return fel.slice(0, 4);
 });
 
-lagg('enkelt läge', 'UI:t visar platser, inte kWh per uttag', () => {
-  // Presentationsspärr av samma slag som resten av filen. Enkla lägets värde
-  // står och faller med att det svarar på Gretas fråga — tas SimpleMode bort
-  // eller kopplas den ur render-grenen faller appen tillbaka på
-  // uttags-inmatningen utan att något test annars märker det.
+lagg('enkelt läge', 'reglaget kostar ett computeEnergy, inte arton', () => {
+  // Prestandaspärr, och den motsvarar ett RAPPORTERAT fel: den första versionen
+  // sökte baklänges (ange körsträcka → få antal platser) och gjorde ~18
+  // computeEnergy-anrop per dragsteg, 11-26 ms. Vid 60 Hz har webbläsaren 16 ms
+  // per bildruta, så reglaget gick inte att dra i vare sig Chrome eller Edge.
+  // test-reglage.mjs var grön hela tiden — den mäter slutvärdet, inte
+  // upplevelsen. Faller om någon återinför en sökning i beräkningen.
+  const fel = [];
+  const t = process.hrtime.bigint();
+  const STEG = 60;                       // en dragning från ände till ände
+  for (let i = 0; i < STEG; i++) enkelt({ outlets: 1 + i * 2 });
+  const msPerSteg = Number(process.hrtime.bigint() - t) / 1e6 / STEG;
+  if (msPerSteg > 8) {
+    fel.push(`${msPerSteg.toFixed(1)} ms per dragsteg — budget 8 ms (halva bildrutan vid 60 Hz). `
+      + 'Gör beräkningen en sökning igen? Reglaget blir omöjligt att dra.');
+  }
+  return fel;
+});
+
+lagg('enkelt läge', 'UI:t frågar efter platser och svarar i km', () => {
+  // Presentationsspärr av samma slag som resten av filen. Enkla lägets värde står
+  // och faller med att det svarar på kundens fråga — kopplas SimpleMode ur
+  // render-grenen faller appen tillbaka på split-vyn utan att något annat märker det.
   const fel = [];
   if (!/function SimpleMode\(/.test(VARIANT)) fel.push('SimpleMode saknas i _33_variant.jsx');
   if (!/uiMode === 'simple'\)\s*\{\s*return \(\s*<SimpleMode/.test(VARIANT))
     fel.push('render-grenen för uiMode=simple saknas — enkelt läge når aldrig SimpleMode');
-  if (!/computePlaces\(/.test(VARIANT)) fel.push('SimpleMode anropar inte computePlaces');
-  if (!/laddplatser/.test(VARIANT)) fel.push('ordet "laddplatser" saknas — svarar läget fortfarande på Gretas fråga?');
-  // Schablonbehovet är reglagets utgångspunkt; utan det startar läget på
-  // "obegränsat", och då fyller varje anläggning oavsett storlek.
+  if (!/C\.computeSimple\(/.test(VARIANT)) fel.push('SimpleMode anropar inte computeSimple');
+  if (!/function SimplePlacesSlider/.test(VARIANT)) fel.push('platsreglaget saknas');
+  if (!/km per laddning/.test(VARIANT)) fel.push('svaret anges inte i km — är riktningen omvänd igen?');
+  // Utan energibehov kan en bil ladda hela parkeringstiden, och talet blir
+  // fysiskt omöjligt (922 km, granskningen 2026-09-12). Varningen är enda
+  // spärren mot det i den här vyn.
+  if (!/schablonBatteri\(\)/.test(VARIANT)) fel.push('batterivarningen saknas i enkla läget');
   for (const k of ['brf', 'office', 'mall', 'garage']) {
-    const m = new RegExp(k + ":\\s*\\{[^}]*needKWh:\\s*\\d+");
-    if (!m.test(VARIANT)) fel.push(`PROPERTY_PRESETS.${k} saknar needKWh`);
+    if (!new RegExp(k + ":\\s*\\{[^}]*profileKey:").test(VARIANT)) fel.push(`PROPERTY_PRESETS.${k} saknas`);
   }
   return fel;
 });

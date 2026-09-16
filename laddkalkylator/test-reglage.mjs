@@ -61,10 +61,17 @@ const APP = ADRESS || ('file:///' + encodeURI(path.resolve(FIL).replace(/\\/g, '
 // snabbare och pålitligare än att klicka sig dit genom UI:t.
 const LAGEN = [
   // Enkla läget har sedan v3.10.0 ETT reglage, och det är inte parkeringstiden:
-  // läget frågar hur långt varje bil ska kunna köra och räknar fram antalet
-  // laddplatser. Rubrikraden är dold (utanRubrik), så aria-label är reglagets
-  // enda namn — går det förlorat är reglaget onåbart för skärmläsare OCH här.
-  { namn: 'enkelt läge', hash: { uiMode: 'simple' }, reglage: ['Räckvidd per laddning'] },
+  // läget frågar hur många laddplatser kunden vill ha och svarar med hur långt
+  // varje bil kan köra. Rubrikraden är dold (utanRubrik), så aria-label är
+  // reglagets enda namn — går det förlorat är reglaget onåbart för skärmläsare
+  // OCH här.
+  //
+  // OBS att den här sviten INTE kunde se felet Daniel rapporterade 2026-09-16
+  // ("slidern fungerar varken i Chrome eller Edge"). Den mäter slutvärdet efter
+  // ett drag, och värdet blev rätt — reglaget var bara för långsamt att följa
+  // pekaren, eftersom varje dragsteg räknade om hela modellen. Prestandan
+  // vaktas i test-fynd.mjs; den här sviten vaktar att händelserna når fram.
+  { namn: 'enkelt läge', hash: { uiMode: 'simple' }, reglage: ['Antal laddplatser'] },
   { namn: 'avancerat',   hash: { uiMode: 'advanced', mode: 'energy' },
     reglage: ['Parkeringstid', 'Peak-beläggning', 'Befintlig last', 'Drift & underhåll'] },
   { namn: 'hubs-läget',  hash: { uiMode: 'advanced', mode: 'hubs' },
