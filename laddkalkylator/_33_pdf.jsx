@@ -732,7 +732,7 @@ function PDFSimple({ data }) {
   const rad = (etikett, varde) => (
     <div style={{
       display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-      padding: '9px 0', borderBottom: `1px solid ${BRAND.line}`, gap: 16,
+      padding: '7px 0', borderBottom: `1px solid ${BRAND.line}`, gap: 16,
     }}>
       <span style={{ fontSize: 11.5, color: BRAND.ink2 }}>{etikett}</span>
       <span style={{ fontSize: 11.5, fontFamily: BRAND.mono, color: BRAND.ink, textAlign: 'right' }}>{varde}</span>
@@ -779,7 +779,7 @@ function PDFSimple({ data }) {
               rapport, två oförenliga påståenden. */}
           <div style={{ fontFamily: BRAND.serif, fontStyle: 'italic', fontSize: 16, color: BRAND.accentDeep, lineHeight: 1.35, maxWidth: 340 }}>
             per bil och dygn · {Amp.fmt(kWh, { digits: 1 })} kWh
-            <br/>alla {i.outlets} platser, inom {i.parkingHours} h laddfönster
+            <br/>alla {i.outlets} platser, {i.parkingHours} h parkering
           </div>
         </div>
         <div style={{ height: 172, position: 'relative', overflow: 'hidden', background: '#272120' }}>
@@ -818,7 +818,8 @@ function PDFSimple({ data }) {
           {rad('Fastighetstyp', i.fastighet)}
           {rad('Huvudsäkring', `${i.fuseSizeA} A · 3-fas 400 V`)}
           {rad('Laddplatser', `${i.outlets} st`)}
-          {rad('Laddfönster per dygn', `${i.parkingHours} h`)}
+          {rad('Parkeringstid per dygn', `${i.parkingHours} h`)}
+          {o.spreadHours > 0 && rad('Spridda ankomster', `±${Amp.fmt(o.spreadHours, { digits: 1 })} h`)}
         </div>
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
@@ -832,18 +833,18 @@ function PDFSimple({ data }) {
               använder 43,648, och då ska ingen vy visa ett tredje tal. */}
           {rad('Elanslutning', `${Amp.fmt(o.servisKW, { digits: 1 })} kW`)}
           {rad('Effekttak mot elnätet', `${Amp.fmt(o.systemCapKW, { digits: 1 })} kW`)}
-          {rad('Levererat per dygn', `${Amp.fmt(o.totalEnergyDay, { digits: 0 })} kWh`)}
+          {rad('Effektiv laddtid', `${Amp.fmt(o.effektivTimmar, { digits: 1 })} h på fullt tak`)}
         </div>
       </div>
 
       {/* effektkurvan */}
-      <div style={{ margin: '22px 56px 0 56px' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 9 }}>
+      <div style={{ margin: '18px 56px 0 56px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
           <Balk width={20} color={BRAND.ink} height={3} style={{ position: 'relative', top: -5 }} />
           <div style={{ fontFamily: BRAND.serif, fontSize: 18, fontWeight: 500, letterSpacing: -0.2 }}>Effekten över dygnet</div>
           <div style={{ fontSize: 10.5, color: BRAND.mute }}>kW per timme</div>
         </div>
-        <PowerChart hourly={o.hourly} cap={o.effectiveCap} height={96} width={682} />
+        <PowerChart hourly={o.hourly} cap={o.effectiveCap} height={84} width={682} />
         <div style={{ fontSize: 10, lineHeight: 1.55, color: BRAND.ink2, marginTop: 8 }}>
           Alla {i.outlets} bilar laddar inte för full effekt på en gång. SmartHub mäter
           fastighetens förbrukning och fördelar effekten mellan bilarna inom laddfönstret
@@ -863,7 +864,7 @@ function PDFSimple({ data }) {
           Varningen väger tyngre än en uppmaning att höra av sig. */}
       {!(forLite || overBatteri) && (
       <div style={{
-        margin: '18px 56px 0 56px', padding: '13px 20px',
+        margin: '14px 56px 0 56px', padding: '12px 20px',
         background: BRAND.accentWash,
         display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 84px', gap: 18, alignItems: 'center',
       }}>
@@ -890,7 +891,7 @@ function PDFSimple({ data }) {
           så högt att det la sig ovanpå sidfoten — samma fel som v3.9.5.
           Två kolumner halverar höjden, och i flödet kan ingenting överlappa. */}
       <div style={{
-        margin: '14px 56px 0 56px',
+        margin: '10px 56px 0 56px',
         display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 26,
       }}>
         <div>
@@ -898,10 +899,12 @@ function PDFSimple({ data }) {
             Så räknas det
           </div>
           <div style={{ fontSize: 9.5, lineHeight: 1.55, color: BRAND.ink2 }}>
-            Energi per bil = effekttak × laddfönster / platser:
-            {' '}{Amp.fmt(o.systemCapKW, { digits: 1 })} kW × {i.parkingHours} h / {i.outlets} platser.
-            En laddning per plats och dygn. Hela anslutningen räknas som tillgänglig —
-            ingen befintlig grundlast avdragen. Räckvidd för en genomsnittsbil,
+            Energi per bil = effekttak × effektiv laddtid / platser:
+            {' '}{Amp.fmt(o.systemCapKW, { digits: 1 })} kW × {Amp.fmt(o.effektivTimmar, { digits: 1 })} h
+            / {i.outlets} platser. En laddning per plats och dygn.
+            {o.spreadHours > 0 && (<> Bilarna antas komma utspritt över
+            {' '}{Amp.fmt(o.spreadHours, { digits: 1 })} timmar, inte samtidigt.</>)} Hela
+            anslutningen räknas som tillgänglig — ingen befintlig grundlast avdragen. Räckvidd för en genomsnittsbil,
             {' '}{Amp.fmt(i.carKwh100, { digits: 1 })} kWh/100 km vid verklig förbrukning;
             vintertid går det åt 20–40 % mer.
           </div>

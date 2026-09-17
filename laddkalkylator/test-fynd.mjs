@@ -686,9 +686,11 @@ lagg('enkelt läge', 'påstår aldrig att alla platser laddar samtidigt', () => 
   // Ersättningen måste finnas, annars är talet borta helt.
   if (!VARIANT.includes('per bil och dygn')) fel.push('skärmen anger inte energin per bil och dygn');
   if (!PDF.includes('per bil och dygn')) fel.push('PDFSimple anger inte energin per bil och dygn');
-  // Och laddfönstret måste nämnas — utan det är "per dygn" tvetydigt.
-  if (!/laddfönster/.test(VARIANT)) fel.push('skärmen nämner inte laddfönstret');
-  if (!/laddfönster/.test(PDF)) fel.push('PDFSimple nämner inte laddfönstret');
+  // Tiden måste nämnas — utan den är "per dygn" tvetydigt.
+  if (!VARIANT.includes('parkering')) fel.push('skärmen nämner inte parkeringstiden');
+  if (!PDF.includes('Parkeringstid')) fel.push('PDFSimple nämner inte parkeringstiden');
+  if (!VARIANT.includes('Effektiv laddtid')) fel.push('skärmen visar inte effektiv laddtid');
+  if (!PDF.includes('Effektiv laddtid')) fel.push('PDFSimple visar inte effektiv laddtid');
   // FASTIGHETSTYPERNAS LADDFÖNSTER är förstavärdet varje kund möter, och de går
   // rakt in i svaret: modellen är linjär i tiden, så 10 -> 15 h höjer energin
   // per bil med 50 %. Talen är domänval, inte implementation — ändras de ska det
@@ -706,6 +708,51 @@ lagg('enkelt läge', 'påstår aldrig att alla platser laddar samtidigt', () => 
     if (p < 0) { fel.push(`PROPERTY_PRESETS.${k} saknar parkingHours`); continue; }
     const varde = parseInt(rad.slice(p + 13), 10);
     if (varde !== h) fel.push(`PROPERTY_PRESETS.${k} har ${varde} h, väntat ${h}`);
+  }
+
+  // SERVETTUTRÄKNINGEN, nu med effektiv laddtid i stället för parkeringstiden:
+  //   energi per bil = effekttak × effektiv tid / platser × verkningsgrad
+  // Med spridning arbetar anläggningen längre men med färre bilar i ändarna, och
+  // effektivTimmar är just den tid som ger samma energi på fullt tak. Går den
+  // identiteten sönder stämmer inte talet UI:t skriver ut.
+  for (const [a, n, L, pk, S] of [[63, 40, 10, 'residential', 0], [125, 20, 9, 'office', 0],
+                                  [25, 60, 3, 'mall', 0], [250, 3, 24, 'flat', 0],
+                                  [63, 40, 15, 'residential', 2], [63, 10, 15, 'residential', 2]]) {
+    const r = C.computeSimple({ fuseSizeA: a, existingLoadPct: 0, outlets: n, parkingHours: L,
+      profileHours: C.PROFILES[pk].hours, hwLimitKW: 11, efficiency: 0.95, spreadHours: S });
+    if (r.sessionsPerDay !== n) {
+      fel.push(`${a}A n=${n} L=${L}: ${r.sessionsPerDay} laddningar per dygn, väntat ${n}`);
+    }
+    const servett = r.systemCapKW * r.effektivTimmar / n * 0.95;
+    if (Math.abs(servett - r.perOutletKWh) / Math.max(1, r.perOutletKWh) > 0.001) {
+      fel.push(`${a}A n=${n} L=${L} S=${S}: appen ${r.perOutletKWh.toFixed(2)} kWh, `
+        + `servettuträkningen ${servett.toFixed(2)} kWh`);
+    }
+    // Spridning är en UPPSIDA, aldrig en gissning som kan slå åt fel håll.
+    if (S > 0) {
+      const utan = C.computeSimple({ fuseSizeA: a, existingLoadPct: 0, outlets: n, parkingHours: L,
+        profileHours: C.PROFILES[pk].hours, hwLimitKW: 11, efficiency: 0.95, spreadHours: 0 });
+      if (r.perOutletKWh < utan.perOutletKWh - 1e-9) {
+        fel.push(`${a}A n=${n}: spridning gav ${r.perOutletKWh.toFixed(2)} kWh, `
+          + `MINDRE än worst case ${utan.perOutletKWh.toFixed(2)}`);
+      }
+    } else if (!r.limitedByCar && Math.abs(r.effektivTimmar - L) > 0.01) {
+      // Bara när EFFEKTTAKET binder är effektiv tid = parkeringstiden. Binder
+      // bilens AC-tak (få platser, stort tak) går anläggningen aldrig på fullt
+      // tak, och effektiv tid är då kortare — 3 platser på 250 A ger 4,8 h av
+      // 24, vilket är rätt svar och inte ett fel.
+      fel.push(`${a}A n=${n} L=${L}: utan spridning ska effektiv tid vara ${L} h, `
+        + `är ${r.effektivTimmar.toFixed(1)}`);
+    }
+  }
+
+  // DANIELS SPRIDNINGSKURVA: 2 h vid 10 platser, 3 h vid 30, 4 h vid 50 och uppåt.
+  for (const [n, vantat] of [[10, 2], [30, 3], [50, 4], [120, 4]]) {
+    const r = C.computeSimple({ fuseSizeA: 63, existingLoadPct: 0, outlets: n, parkingHours: 15,
+      profileHours: C.PROFILES.residential.hours, hwLimitKW: 11, efficiency: 0.95, spreadHours: 2 });
+    if (Math.abs(r.spreadHours - vantat) > 0.01) {
+      fel.push(`${n} platser gav ${r.spreadHours.toFixed(1)} h spridning, väntat ${vantat}`);
+    }
   }
   return fel;
 });

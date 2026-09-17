@@ -1254,6 +1254,18 @@
   //                      laddfönstret på dygnet, inte för att forma efterfrågan
   //   hwLimitKW        — bilens AC-tak (kW)
   //   efficiency       — verkningsgrad nät → uttag
+  // Ankomstspridningens skalfaktor. Daniel 2026-09-17: "2h vid 10, 3h vid 30,
+  // 4h vid 50+" för bostad, alltså 1x / 1,5x / 2x av basvärdet, med tak.
+  // Linjärt mellan 10 och 50 platser:  1 + (N − 10) / 40, cappat på 2.
+  //
+  // Att spridningen växer med storleken är rimligt — fler hushåll, mer
+  // variation i när folk kommer hem. Statistiskt växer spannet mellan första
+  // och sista ankomst långsammare än så (≈ √ln N), men Daniels kurva är
+  // brantare med flit och ändå långt från vad verkligheten troligen ger.
+  function spridningsFaktor(outlets) {
+    return Math.min(2, 1 + Math.max(0, outlets - 10) / 40);
+  }
+
   function computeSimple(inp) {
     const num = (v, d) => (Number.isFinite(v) ? v : d);
     const fuse = Math.max(1, num(inp.fuseSizeA, 63));
@@ -1268,44 +1280,65 @@
     const L = Math.min(24, Math.max(1, Math.round(num(inp.parkingHours, 1))));
     const eff = Math.max(0.5, Math.min(1, num(inp.efficiency, DEFAULT_EFFICIENCY)));
     const hwLimit = Math.max(0.1, num(inp.hwLimitKW, HW_LIMIT_KW));
+    // Spridning 0 = worst case, alla bilar samtidigt.
+    const spridning = Math.max(0, num(inp.spreadHours, 0)) * spridningsFaktor(outlets);
 
-    // --- Energin per bil ---------------------------------------------------
-    // Anläggningens effekt delad på platserna, under laddfönstret. Två tak:
-    //   1. vad anläggningen kan leverera: systemCap × L, fördelat på outlets
-    //   2. vad bilen kan ta emot: dess AC-laddare × L
-    const franNatetPerBil = (systemCapKW * L) / outlets;      // kWh, nätsidigt
-    const perOutletKWh = Math.min(franNatetPerBil * eff, hwLimit * L);
-    const totalEnergyDay = perOutletKWh * outlets;            // levererat
-    const totalEnergyFromGrid = totalEnergyDay / eff;
-    // Binder bilens tak ligger anläggningen under sitt eget effekttak.
-    const effektKW = Math.min(systemCapKW, totalEnergyFromGrid / L);
+    // --- Närvaro över dygnet ----------------------------------------------
+    // Bilarna anländer jämnt utspritt över `spridning` timmar och står L timmar
+    // var. Närvaron blir en trapets: växer, platå, faller. Formeln hanterar
+    // även spridning > L, då platån aldrig når alla bilar.
+    const narvarande = (t) => outlets * (Math.min(1, t / spridning) - Math.max(0, (t - L) / spridning));
+    const fonster = L + spridning;
 
-    // --- Laddfönstret ------------------------------------------------------
-    // L sammanhängande timmar där profilen har flest bilar på plats. Profilen
-    // används alltså bara för att PLACERA fönstret på dygnet, inte för att
-    // forma efterfrågan — bostadsprofilen lägger det över natten, kontorets
-    // mitt på dagen. Utan profil: från midnatt.
+    // --- Energin -----------------------------------------------------------
+    // Anläggningen levererar min(effekttak, närvarande × bilens tak) i varje
+    // ögonblick. Utan spridning är det en rektangel och integralen blir den
+    // enkla produkten; med spridning arbetar anläggningen längre men med färre
+    // bilar i ändarna. Nettot är ALLTID mer än worst case, aldrig mindre.
+    let franNatet;
+    if (spridning <= 0) {
+      franNatet = Math.min(systemCapKW * L, outlets * hwLimit * L / eff);
+    } else {
+      const DT = 0.25;                       // kvartstimmessteg
+      franNatet = 0;
+      for (let t = DT / 2; t < fonster; t += DT) {
+        franNatet += Math.min(systemCapKW, narvarande(t) * hwLimit / eff) * DT;
+      }
+    }
+    const totalEnergyDay = franNatet * eff;
+    const perOutletKWh = totalEnergyDay / outlets;
+    // Effektiv laddtid: så många timmar anläggningen hade behövt gå på FULL
+    // effekt för att leverera samma energi. Gör servettuträkningen giltig igen
+    //   energi per bil = effekttak × effektiv tid / platser × η
+    // och är det tal UI:t redovisar, så formeln går att följa med spridning.
+    const effektivTimmar = franNatet / systemCapKW;
+
+    // --- Laddfönstret på dygnet -------------------------------------------
+    // L + spridning sammanhängande timmar där profilen har flest bilar. Profilen
+    // PLACERAR fönstret, den formar inte efterfrågan.
     const profil = Array.isArray(inp.profileHours) && inp.profileHours.length === 24
       ? inp.profileHours.map((x) => Math.max(0, num(x, 0)))
       : null;
+    const fonsterTim = Math.min(24, Math.max(1, Math.round(fonster)));
     let start = 0;
     if (profil) {
       let bast = -1;
       for (let s = 0; s < 24; s++) {
         let summa = 0;
-        for (let k = 0; k < L; k++) summa += profil[(s + k) % 24];
+        for (let k = 0; k < fonsterTim; k++) summa += profil[(s + k) % 24];
         if (summa > bast) { bast = summa; start = s; }
       }
     }
-    const iFonstret = new Array(24).fill(false);
-    for (let k = 0; k < L; k++) iFonstret[(start + k) % 24] = true;
-    const hourly = iFonstret.map((p) => (p ? effektKW : 0));
-
-    // Okontrollerad efterfrågan: alla bilar drar sitt eget maxtak samtidigt.
-    // Skillnaden mot hourly ÄR lastbalanseringens bidrag, och den är stor —
-    // det är den som gör att anläggningen ryms i servisen.
-    const efterfraganKW = outlets * hwLimit;
-    const hourlyDemand = iFonstret.map((p) => (p ? efterfraganKW : 0));
+    // Timkurvan följer trapetsen, så diagrammet visar det modellen räknar:
+    // effekten trappas upp när bilarna strömmar in och ner när de åker.
+    const hourly = new Array(24).fill(0);
+    const hourlyDemand = new Array(24).fill(0);
+    for (let k = 0; k < fonsterTim; k++) {
+      const t = k + 0.5;
+      const n = spridning > 0 ? Math.max(0, narvarande(t)) : outlets;
+      hourly[(start + k) % 24] = Math.min(systemCapKW, n * hwLimit / eff);
+      hourlyDemand[(start + k) % 24] = n * hwLimit;
+    }
 
     const hubs = Math.max(
       1,
@@ -1318,26 +1351,22 @@
       outlets, hubs, systemCapKW, availableKW, servisKW, existingKW,
       perOutletKWh,
       parkingHours: L,
-      // EN laddning per plats och dygn. Det är hela skillnaden mot
-      // computeEnergy, som låter platserna omsättas — se noten ovan.
+      spreadHours: spridning,
+      effektivTimmar,
       sessionsPerDay: outlets,
       sessionsPerOutlet: 1,
-      // Binder bilens AC-tak i stället för anläggningens effekt? Då hjälper
-      // varken fler hubbar eller en större säkring.
-      limitedByCar: hwLimit * L <= franNatetPerBil * eff + 1e-9,
+      limitedByCar: outlets * hwLimit / eff <= systemCapKW + 1e-9,
       laddfonsterStart: start,
-      // Formen HourlyChart och PowerChart förväntar sig. Inget kohortsvep
-      // behövs: modellen är en rektangel, och det är precis vad den ritar.
       energy: {
         hourly,
         hourlyDemand,
         effectiveCap: systemCapKW,
         installedCap: hubs * capPerHub,
-        peakPowerKW: effektKW,
-        peakDemandKW: efterfraganKW,
-        peakReductionKW: Math.max(0, efterfraganKW - effektKW),
+        peakPowerKW: Math.max(...hourly),
+        peakDemandKW: Math.max(...hourlyDemand),
+        peakReductionKW: Math.max(0, Math.max(...hourlyDemand) - Math.max(...hourly)),
         totalEnergyDay,
-        totalEnergyFromGrid,
+        totalEnergyFromGrid: franNatet,
         perOutletKWh,
         hubs,
         profileLabel: inp.profileLabel,

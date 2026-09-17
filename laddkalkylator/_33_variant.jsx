@@ -342,6 +342,8 @@ function buildSimplePdfData({ res, fastighet, profilLabel, fuseSizeA, parkingHou
     outputs: {
       perOutletKWh: res.perOutletKWh,
       sessionsPerDay: res.sessionsPerDay,
+      effektivTimmar: res.effektivTimmar,
+      spreadHours: res.spreadHours,
       hubs: res.hubs,
       servisKW: res.servisKW,
       systemCapKW: res.systemCapKW,
@@ -869,6 +871,7 @@ function SimpleMode(p) {
     existingLoadPct: 0,
     outlets: p.outlets,
     parkingHours: p.parkingHours,
+    spreadHours: preset.spreadHours ?? 0,
     profileHours: profile.hours,
     peakOccupancyPct: p.peakOcc,
     capPerHub: C.CAP_PER_HUB_KW,
@@ -876,7 +879,7 @@ function SimpleMode(p) {
     efficiency: p.efficiency,
     strategy: p.strategy,
     profileLabel: profile.label,
-  }), [p.fuseSizeA, p.outlets, p.parkingHours, p.profileKey,
+  }), [p.fuseSizeA, p.outlets, p.parkingHours, p.profileKey, p.propertyType,
        p.peakOcc, p.carAcLimit, p.efficiency, p.strategy]);
 
   const kWh = res.perOutletKWh;
@@ -993,7 +996,9 @@ function SimpleMode(p) {
               inte lova samtidighet. */}
           <div style={{ fontSize: 15, color: I.ink2, marginTop: 14, lineHeight: 1.5 }}>
             <strong>{C.fmt(kWh, { digits: 1 })} kWh</strong> per bil och dygn — alla {res.outlets} platser,
-            inom {res.parkingHours} timmars laddfönster.
+            {' '}{res.spreadHours > 0
+              ? <>{res.parkingHours} h parkering med {C.fmt(res.spreadHours, { digits: 1 })} h spridda ankomster.</>
+              : <>inom {res.parkingHours} timmars laddfönster.</>}
           </div>
           <div style={{ fontSize: 12.5, color: I.mute, marginTop: 8, fontFamily: I.mono }}>
             {hubTxt} · {C.fmt(res.systemCapKW, { digits: 1 })} kW mot elnätet · hela anslutningen används
@@ -1257,11 +1262,18 @@ function SimpleDetails({ res, kWh, km, profil, parkingHours, peakOcc, fuseSizeA 
           {rad('Effekttak för laddningen', C.fmt(res.systemCapKW, { digits: 1 }) + ' kW  (hela anslutningen)')}
           {rad('SmartHubs', res.hubs + ' × ' + C.CAP_PER_HUB_KW + ' kW')}
           {rad('Laddplatser', res.outlets + ' st')}
+          {rad('Parkeringstid', res.parkingHours + ' h per dygn')}
+          {res.spreadHours > 0 && rad('Spridda ankomster', '±' + C.fmt(res.spreadHours, { digits: 1 }) + ' h')}
+          {rad('Effektiv laddtid', C.fmt(res.effektivTimmar, { digits: 1 }) + ' h på fullt tak')}
           {rad('Energi per bil och laddning', C.fmt(kWh, { digits: 1 }) + ' kWh  ≈ ' + km + ' km')}
           <div style={{ fontSize: 11, color: I.mute, lineHeight: 1.6, marginTop: 14 }}>
-            Hela anslutningen räknas som tillgänglig för laddning: enkla läget antar ingen
-            befintlig grundlast och drar inte av någon säkerhetsmarginal. Lastbalanseringen
-            mäter fastighetens förbrukning och håller laddningen under taket, så
+            Energi per bil = effekttak × effektiv laddtid / platser × verkningsgrad.
+            {res.spreadHours > 0 && (<> Bilarna antas komma utspritt över
+            {' '}{C.fmt(res.spreadHours, { digits: 1 })} timmar i stället för samtidigt, vilket
+            låter anläggningen arbeta längre — men med färre bilar i början och slutet.
+            Spridningen växer med antalet platser.</>)} Hela anslutningen räknas som
+            tillgänglig: enkla läget antar ingen befintlig grundlast och drar inte av någon
+            säkerhetsmarginal — lastbalanseringen håller laddningen under taket, så
             huvudsäkringen är gränsen. Har fastigheten betydande egen last (hiss, tvättstuga,
             värme) ska den dras av i Avancerat, och då minskar talet ovan.
             Övriga antaganden ur fastighetstypen: {profil}-profil, {parkingHours} h parkering,
@@ -1812,6 +1824,13 @@ function StrategyPicker({ value, onChange }) {
 }
 
 // ───────── Enkel/Avancerad — fastighetstyp-presets ─────────
+// spreadHours — ankomstspridning i timmar (Daniel 2026-09-17). Bilarna kommer
+// inte samtidigt: i en bostad droppar folk in över kvällen, i ett köpcentrum
+// nästan direkt. Modellen låter anläggningen arbeta längre men med färre bilar
+// i ändarna, vilket ALLTID ger mer energi per bil än worst case — aldrig mindre.
+// Värdet skalas med antalet platser i computeSimple (2 h vid 10 platser, 3 h vid
+// 30, 4 h vid 50+); talen här är basvärden vid ~10 platser.
+//
 // needKWh — schablonbehov per laddtillfälle. Talen är satta efter parkeringstiden
 // och vad besöket rimligen ska räcka till: en natt hemma fyller på en
 // dagsförbrukning med marginal, ett köpcentrumbesök på tre timmar gör det inte.
@@ -1830,10 +1849,10 @@ const PROPERTY_PRESETS = {
   // till morgon. Tiden är enkla lägets LADDFÖNSTER per dygn och går rakt in i
   // svaret — 10 -> 15 h höjer energin per bil med 50 % i varje konfiguration.
   // Presetet delas med Avancerat, där det sätter parkeringstiden på samma sätt.
-  brf:    { label: 'BRF / bostad',  profileKey: 'residential', parkingHours: 15, peakOcc: 0.85, occPct: 0.85, needKWh: 20, glyph: <GlyphHome /> },
-  office: { label: 'Kontor',        profileKey: 'office',      parkingHours: 9,  peakOcc: 0.85, occPct: 0.75, needKWh: 15, glyph: <GlyphOffice /> },
-  mall:   { label: 'Köpcentrum',    profileKey: 'mall',        parkingHours: 3,  peakOcc: 0.85, occPct: 0.60, needKWh: 10, glyph: <GlyphMall /> },
-  garage: { label: 'Parkeringshus', profileKey: 'flat',        parkingHours: 6,  peakOcc: 0.60, occPct: 0.55, needKWh: 15, glyph: <GlyphFlat /> },
+  brf:    { label: 'BRF / bostad',  profileKey: 'residential', parkingHours: 15, peakOcc: 0.85, occPct: 0.85, spreadHours: 2, needKWh: 20, glyph: <GlyphHome /> },
+  office: { label: 'Kontor',        profileKey: 'office',      parkingHours: 9,  peakOcc: 0.85, occPct: 0.75, spreadHours: 1, needKWh: 15, glyph: <GlyphOffice /> },
+  mall:   { label: 'Köpcentrum',    profileKey: 'mall',        parkingHours: 3,  peakOcc: 0.85, occPct: 0.60, spreadHours: 0.5, needKWh: 10, glyph: <GlyphMall /> },
+  garage: { label: 'Parkeringshus', profileKey: 'flat',        parkingHours: 6,  peakOcc: 0.60, occPct: 0.55, spreadHours: 1, needKWh: 15, glyph: <GlyphFlat /> },
 };
 
 // Härled vald fastighetstyp ur faktiska värden — så chippen aldrig "ljuger" om
