@@ -798,6 +798,18 @@ lagg('enkelt läge', 'PDF-exporten finns och är hel', () => {
     fel.push(`effekttaket visas med olika precision: skärmen digits ${skarmDec || '(inga)'}, `
       + `rapporten digits ${pdfDec || '(inga)'} — samma tal måste se likadant ut i båda`);
   }
+  // HourlyChart: decimalregeln måste gälla HELA statraden, inte bara taket.
+  // Satt den bara på taketiketten stod "Levererat 44 kW" bredvid "Effekttak
+  // 43,6 kW" — samma tal, två siffror, bredvid varandra. Tredje gången samma
+  // felklass dök upp under arbetet med enkla läget.
+  const hc = VARIANT.slice(VARIANT.indexOf('function HourlyChart'),
+                           VARIANT.indexOf('function LegendSwatch'));
+  for (const f of ['peakDemandKW', 'peakPowerKW', 'peakReductionKW']) {
+    if (hc.includes(f + ', {digits: 0}') || hc.includes(f + ', { digits: 0 }')) {
+      fel.push(`HourlyChart visar ${f} med fast heltal — står bredvid effekttaket, `
+        + 'som visar decimal när talet har en');
+    }
+  }
   if (skarmDec && skarmDec !== '1') {
     fel.push(`effekttaket visas med digits ${skarmDec}; valt format är en decimal (43,6 kW)`);
   }

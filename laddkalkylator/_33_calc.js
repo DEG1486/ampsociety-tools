@@ -1333,11 +1333,18 @@
     // effekten trappas upp när bilarna strömmar in och ner när de åker.
     const hourly = new Array(24).fill(0);
     const hourlyDemand = new Array(24).fill(0);
+    // Antalet bilar på plats varje timme. Effektkurvan visar den INTE: effekten
+    // är min(tak, närvarande × bilens tak), och redan en handfull bilar mättar
+    // taket, så staplarna blir platta medan bilarna strömmar in. Serien ritas
+    // därför som en egen linje i diagrammet — annars syns spridningen bara som
+    // att fönstret är längre, utan att det framgår varför.
+    const hourlyCars = new Array(24).fill(0);
     for (let k = 0; k < fonsterTim; k++) {
       const t = k + 0.5;
       const n = spridning > 0 ? Math.max(0, narvarande(t)) : outlets;
       hourly[(start + k) % 24] = Math.min(systemCapKW, n * hwLimit / eff);
       hourlyDemand[(start + k) % 24] = n * hwLimit;
+      hourlyCars[(start + k) % 24] = n;
     }
 
     const hubs = Math.max(
@@ -1360,6 +1367,7 @@
       energy: {
         hourly,
         hourlyDemand,
+        hourlyCars,
         effectiveCap: systemCapKW,
         installedCap: hubs * capPerHub,
         peakPowerKW: Math.max(...hourly),

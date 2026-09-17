@@ -1047,11 +1047,21 @@ function SimpleMode(p) {
             </div>
             <div style={{ fontSize: 12, color: I.mute }}>kW per timme</div>
           </div>
-          <HourlyChart energy={res.energy} utanEfterfragan />
+          <HourlyChart energy={res.energy} utanEfterfragan visaBilar />
           <div style={{ fontSize: 11.5, color: I.mute, marginTop: 10, lineHeight: 1.55 }}>
             Alla {res.outlets} bilar laddar inte för full effekt på en gång — Amp5 fördelar
             effekten mellan dem inom laddfönstret och håller anläggningen under taket.
             Det är därför {C.fmt(res.systemCapKW, { digits: 1 })} kW räcker till {res.outlets} platser.
+            {/* Spridningen syns i kurvan som ett LÄNGRE fönster, inte som en ramp:
+                effekten är min(tak, närvarande × bilens tak), och redan en handfull
+                bilar mättar taket. Rampen syns bara med få platser. Utan den här
+                meningen ser det ut som att bilarna står 18 h när de står 15. */}
+            {res.spreadHours > 0 && (
+              <> Fönstret är {C.fmt(res.parkingHours + res.spreadHours, { digits: 0 })} timmar
+              långt fast varje bil bara står {res.parkingHours} — de kommer och åker utspritt
+              över {C.fmt(res.spreadHours, { digits: 1 })} timmar, så anläggningen har något
+              att ladda längre.</>
+            )}
           </div>
         </div>
 
@@ -3104,9 +3114,19 @@ function SectionTitle({ title, hint }) {
 // Diagrammet såg då ut att motsäga texten bredvid ("31 kW räcker till 40
 // platser"). Avancerat visar fortfarande båda serierna — där är jämförelsen
 // hela poängen.
-function HourlyChart({ energy, utanEfterfragan }) {
+function HourlyChart({ energy, utanEfterfragan, visaBilar }) {
   const C = window.Amp5Calc;
   const cap = energy.effectiveCap;
+  // Bilkurvan har EGEN skala. Effekt och antal bilar är olika storheter, och att
+  // tvinga in dem på samma axel hade gjort den ena oläslig — med 40 platser på
+  // ett 44 kW-tak skulle bilarna ligga i taket och effekten i botten.
+  const bilar = visaBilar && Array.isArray(energy.hourlyCars) ? energy.hourlyCars : null;
+  const bilMax = bilar ? Math.max(1, ...bilar) : 1;
+  // Decimal bara när talet HAR en. Enkla lägets tak är servisens exakta effekt
+  // (43,648 kW) medan Avancerats är hubbar × 44. Regeln måste gälla HELA
+  // statraden: när den bara satt på taketiketten stod "Levererat 44 kW" bredvid
+  // "Effekttak 43,6 kW" — samma tal, två siffror, bredvid varandra.
+  const dec = (v) => (Number.isInteger(v) ? 0 : 1);
   // Binder ett angivet effekttak i stället för hubbarnas märkeffekt? Då är
   // "Hub-tak" fel namn på strecket — det är fastighetens/elnätets tak.
   const takEtikett = (energy.installedCap > cap + 0.01) ? 'Effekttak' : 'Hub-tak';
@@ -3122,27 +3142,40 @@ function HourlyChart({ energy, utanEfterfragan }) {
   return (
     <div style={{ background: I.surface, border: `1px solid ${I.line}`, borderRadius: 2, padding: '16px 20px 8px' }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 14, gap: 16, flexWrap: 'wrap' }}>
-        {!utanEfterfragan && <Stat small label="Efterfrågan" value={`${C.fmt(energy.peakDemandKW, {digits: 0})} kW`} />}
-        <Stat small label="Levererat" value={`${C.fmt(energy.peakPowerKW, {digits: 0})} kW`} />
+        {!utanEfterfragan && <Stat small label="Efterfrågan" value={`${C.fmt(energy.peakDemandKW, { digits: dec(energy.peakDemandKW) })} kW`} />}
+        <Stat small label="Levererat" value={`${C.fmt(energy.peakPowerKW, { digits: dec(energy.peakPowerKW) })} kW`} />
         {/* peakReductionKW är golvad på noll i calc. I ~0,6 % av fallen
             överstiger den styrda toppen faktiskt den okontrollerade (kön
             mättar effekttaket, som mest +7,1 %) — då skrev raden "Reduktion
             −0 kW" bredvid en anläggning vars topp STEG. Visa raden bara när
             det finns en reduktion att visa. */}
         {!utanEfterfragan && (energy.peakReductionKW || 0) >= 0.5 && (
-          <Stat small label="Reduktion" value={`−${C.fmt(energy.peakReductionKW, {digits: 0})} kW`} />
+          <Stat small label="Reduktion" value={`−${C.fmt(energy.peakReductionKW, { digits: dec(energy.peakReductionKW) })} kW`} />
         )}
         {/* Decimal bara när taket inte är ett jämnt tal: enkla lägets tak är
             servisens exakta effekt (43,6 kW för 63 A) medan Avancerats är
             hubbar × 44. Utan det visade diagrammet 44 bredvid en stödrad som
             sa 43,6 — samma tal, två siffror. */}
-        <Stat small label={takEtikett} value={`${C.fmt(cap, { digits: Number.isInteger(cap) ? 0 : 1 })} kW`} />
+        <Stat small label={takEtikett} value={`${C.fmt(cap, { digits: dec(cap) })} kW`} />
       </div>
       <div style={{ position: 'relative', height: 160, display: 'flex', alignItems: 'flex-end', gap: 3 }}>
         <div style={{
           position: 'absolute', left: 0, right: 0, bottom: `${capPct}%`,
           borderTop: `1px dashed ${I.accent}`, pointerEvents: 'none', zIndex: 2,
         }} />
+        {/* Bilar på plats — ritas ÖVER staplarna (zIndex 3) med
+            preserveAspectRatio="none", så x-skalan följer stapelrutnätet exakt.
+            Punkterna sitter i stapelmitten, (i + 0,5) / 24, samma konvention som
+            tidsetiketterna under grafen. */}
+        {bilar && (
+          <svg viewBox="0 0 24 100" preserveAspectRatio="none" aria-hidden="true"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 3 }}>
+            <polyline
+              points={bilar.map((n, i) => `${i + 0.5},${100 - (n / bilMax) * 92}`).join(' ')}
+              fill="none" stroke={I.forest} strokeWidth="1.6"
+              vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+          </svg>
+        )}
         {energy.hourly.map((delivered, i) => {
           const dem = demand[i];
           const demH = (dem / yMax) * 100;
@@ -3185,6 +3218,12 @@ function HourlyChart({ energy, utanEfterfragan }) {
       <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 10, color: I.mute, flexWrap: 'wrap' }}>
         <LegendSwatch color={I.ink} label="SmartHub levererat" />
         {!utanEfterfragan && <LegendSwatch color={demandFarg} label={harKapat ? 'Okontrollerad efterfrågan (kapas)' : 'Okontrollerad efterfrågan'} />}
+        {bilar && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 12, height: 2, background: I.forest, display: 'inline-block' }} />
+            Bilar på plats (max {C.fmt(bilMax, { digits: 0 })})
+          </span>
+        )}
         <LegendSwatch color={I.accent} dashed label={takEtikett} />
       </div>
     </div>
