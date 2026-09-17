@@ -1826,7 +1826,11 @@ function StrategyPicker({ value, onChange }) {
 // och beläggning, och skulle annars slockna så fort någon justerade behovet i
 // Avancerat — vilket ser ut som att fastighetstypen glömts bort.
 const PROPERTY_PRESETS = {
-  brf:    { label: 'BRF / bostad',  profileKey: 'residential', parkingHours: 10, peakOcc: 0.85, occPct: 0.85, needKWh: 20, glyph: <GlyphHome /> },
+  // 15 h, inte 10 (Daniel 2026-09-17): i en BRF står bilen från eftermiddag
+  // till morgon. Tiden är enkla lägets LADDFÖNSTER per dygn och går rakt in i
+  // svaret — 10 -> 15 h höjer energin per bil med 50 % i varje konfiguration.
+  // Presetet delas med Avancerat, där det sätter parkeringstiden på samma sätt.
+  brf:    { label: 'BRF / bostad',  profileKey: 'residential', parkingHours: 15, peakOcc: 0.85, occPct: 0.85, needKWh: 20, glyph: <GlyphHome /> },
   office: { label: 'Kontor',        profileKey: 'office',      parkingHours: 9,  peakOcc: 0.85, occPct: 0.75, needKWh: 15, glyph: <GlyphOffice /> },
   mall:   { label: 'Köpcentrum',    profileKey: 'mall',        parkingHours: 3,  peakOcc: 0.85, occPct: 0.60, needKWh: 10, glyph: <GlyphMall /> },
   garage: { label: 'Parkeringshus', profileKey: 'flat',        parkingHours: 6,  peakOcc: 0.60, occPct: 0.55, needKWh: 15, glyph: <GlyphFlat /> },

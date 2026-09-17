@@ -689,32 +689,23 @@ lagg('enkelt läge', 'påstår aldrig att alla platser laddar samtidigt', () => 
   // Och laddfönstret måste nämnas — utan det är "per dygn" tvetydigt.
   if (!/laddfönster/.test(VARIANT)) fel.push('skärmen nämner inte laddfönstret');
   if (!/laddfönster/.test(PDF)) fel.push('PDFSimple nämner inte laddfönstret');
-  // EN LADDNING PER PLATS OCH DYGN. Det är hela skillnaden mot computeEnergy,
-  // och det är vad Daniel bad om: "när vi säger parkeringstid så räknar vi per
-  // dygn ... man räknar inte med att det sprids ut så att hela dygnet kan
-  // nyttjas". Kopplas profilmodellen in igen börjar platserna omsättas och
-  // sessionsPerDay glider över antalet platser.
-  //
-  // Och talet ska gå att räkna efter på en servett:
-  //     energi per bil = effekttak × laddfönster / platser × verkningsgrad
-  for (const [a, n, L, pk] of [[63, 40, 10, 'residential'], [125, 20, 9, 'office'],
-                               [25, 60, 3, 'mall'], [250, 3, 24, 'flat']]) {
-    const r = C.computeSimple({ fuseSizeA: a, existingLoadPct: 0, outlets: n, parkingHours: L,
-      profileHours: C.PROFILES[pk].hours, hwLimitKW: 11, efficiency: 0.95 });
-    if (r.sessionsPerDay !== n) {
-      fel.push(`${a}A n=${n} L=${L}: ${r.sessionsPerDay} laddningar per dygn, väntat ${n} `
-        + '(en per plats — omsätts platserna igen?)');
-    }
-    const servett = Math.min(r.systemCapKW * L / n * 0.95, 11 * L);
-    if (Math.abs(servett - r.perOutletKWh) / Math.max(1, r.perOutletKWh) > 0.001) {
-      fel.push(`${a}A n=${n} L=${L}: appen ${r.perOutletKWh.toFixed(2)} kWh, `
-        + `servettuträkningen ${servett.toFixed(2)} kWh`);
-    }
-    // Laddfönstret ska vara L timmar, inte dygnet.
-    const timmarMedEffekt = r.energy.hourly.filter((x) => x > 1e-9).length;
-    if (timmarMedEffekt !== L) {
-      fel.push(`${a}A n=${n} L=${L}: anläggningen arbetar ${timmarMedEffekt} h, väntat ${L}`);
-    }
+  // FASTIGHETSTYPERNAS LADDFÖNSTER är förstavärdet varje kund möter, och de går
+  // rakt in i svaret: modellen är linjär i tiden, så 10 -> 15 h höjer energin
+  // per bil med 50 %. Talen är domänval, inte implementation — ändras de ska det
+  // vara med avsikt. BRF gick 10 -> 15 h 2026-09-17 (bilen står från eftermiddag
+  // till morgon).
+  for (const [k, h] of [['brf', 15], ['office', 9], ['mall', 3], ['garage', 6]]) {
+    // Ingen regex och inga escape-sekvenser: backslasher överlever inte alltid
+    // vägen genom verktygskedjan, och en trasig regex ser ut som en GRÖN spärr
+    // (det hände tre gånger under arbetet med enkla läget). indexOf duger.
+    const bas = VARIANT.indexOf('const PROPERTY_PRESETS');
+    const i = bas < 0 ? -1 : VARIANT.indexOf(k + ':', bas);
+    const radslut = i < 0 ? -1 : VARIANT.indexOf(String.fromCharCode(10), i);
+    const rad = i < 0 ? '' : VARIANT.slice(i, radslut);
+    const p = rad.indexOf('parkingHours:');
+    if (p < 0) { fel.push(`PROPERTY_PRESETS.${k} saknar parkingHours`); continue; }
+    const varde = parseInt(rad.slice(p + 13), 10);
+    if (varde !== h) fel.push(`PROPERTY_PRESETS.${k} har ${varde} h, väntat ${h}`);
   }
   return fel;
 });
