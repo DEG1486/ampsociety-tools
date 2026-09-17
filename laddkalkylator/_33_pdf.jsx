@@ -702,6 +702,210 @@ function PDFEditorial({ data }) {
 }
 
 // --------------------------------------------------------------------------
+// PDFSimple — enkla lägets kundunderlag (EN A4-sida)
+// --------------------------------------------------------------------------
+// Egen mall, inte PDFEditorial med fält borttagna. PDFEditorial förutsätter
+// Avancerats alla tal — beläggningsprofil, energibehov, elnätsbedömning,
+// investeringskalkyl — och enkla läget har medvetet inget av det. En rapport
+// som räknar upp tomma rutor är sämre än en kortare som är hel.
+//
+// EN SIDA, med flit. Sida 2 i PDFEditorial är projektets mest återkommande
+// felkälla (fem mätkriterier i matt-pdf.mjs finns just för den). Här ryms allt
+// på sida 1 med marginal, och då kan det inte spilla över.
+//
+// Innehållet speglar skärmen: förutsättningarna kunden matade in, svaret i km,
+// vad som installeras, effektkurvan som visar varför det räcker, och
+// friskrivningen. Inga tal som inte står på skärmen.
+function PDFSimple({ data }) {
+  const Amp = window.Amp5Calc;
+  const o = data.outputs;
+  const i = data.inputs;
+  const kWh = o.perOutletKWh;
+  const km = Math.round(Amp.rangeKm(kWh, i.carKwh100));
+
+  // Samma ärlighetsspärrar som skärmen. Utan energibehov laddar modellen så
+  // länge bilen står, så talet kan bli fysiskt omöjligt (922 km-fallet,
+  // granskningen 2026-09-12). Rapporten får aldrig vara tystare än skärmen.
+  const overBatteri = kWh > i.carBattery;
+  const forLite = km < 25;
+
+  const rad = (etikett, varde) => (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      padding: '9px 0', borderBottom: `1px solid ${BRAND.line}`, gap: 16,
+    }}>
+      <span style={{ fontSize: 11.5, color: BRAND.ink2 }}>{etikett}</span>
+      <span style={{ fontSize: 11.5, fontFamily: BRAND.mono, color: BRAND.ink, textAlign: 'right' }}>{varde}</span>
+    </div>
+  );
+
+  return (
+    <Page id="sim-1">
+      {/* masthead */}
+      <div style={{ padding: '44px 56px 0 56px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <img src={window.Amp5Assets.logo} alt="AmpSociety" style={{ display: 'block', height: 22, width: 'auto' }} />
+        <div style={{ fontFamily: BRAND.mono, fontSize: 9, color: BRAND.mute, textAlign: 'right', letterSpacing: 0.8 }}>
+          <div>{data.meta.date}</div>
+          <div>Rapport #{data.meta.reportId}</div>
+        </div>
+      </div>
+
+      {/* rubrik */}
+      <div style={{ padding: '34px 56px 0 56px' }}>
+        <Eyebrow>Laddning på befintlig elanslutning{data.meta.projectName ? ` · ${data.meta.projectName}` : ''}</Eyebrow>
+        <div style={{ height: 12 }} />
+        <div style={{
+          fontFamily: BRAND.serif, fontSize: 46, fontWeight: 500,
+          lineHeight: 1.03, letterSpacing: -1, color: BRAND.ink, maxWidth: 560,
+        }}>
+          {i.outlets} laddplatser<br/>utan att bygga ut elnätet.
+        </div>
+        <div style={{ height: 18 }} />
+        <Balk width={64} />
+      </div>
+
+      {/* svaret + bild */}
+      <div style={{
+        margin: '30px 56px 0 56px',
+        display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 220px', gap: 28,
+        alignItems: 'flex-end',
+      }}>
+        <div>
+          <Eyebrow style={{ marginBottom: 8 }}>Varje bil får</Eyebrow>
+          <Num value={km.toLocaleString('sv-SE')} unit="km" size={104} weight={500} />
+          <div style={{ height: 10 }} />
+          <div style={{ fontFamily: BRAND.serif, fontStyle: 'italic', fontSize: 16, color: BRAND.accentDeep, lineHeight: 1.35, maxWidth: 340 }}>
+            per laddning — alla {i.outlets} platser samtidigt,
+            {' '}{Amp.fmt(kWh, { digits: 1 })} kWh per bil
+          </div>
+        </div>
+        <div style={{ height: 172, position: 'relative', overflow: 'hidden', background: '#272120' }}>
+          <img src={window.Amp5Assets.ledDetail} alt=""
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        </div>
+      </div>
+
+      {/* varningar — samma som skärmen, aldrig tystare */}
+      {(forLite || overBatteri) && (
+        <div style={{
+          margin: '22px 56px 0 56px', padding: '11px 14px',
+          background: BRAND.accentWash, borderLeft: `3px solid ${BRAND.accent}`,
+          fontSize: 10.5, lineHeight: 1.5, color: BRAND.ink2,
+        }}>
+          {forLite
+            ? <><strong>Tunt.</strong> {km} km per laddning räcker knappt till en resa till
+                jobbet. Färre platser, eller en större huvudsäkring, ger mer till varje bil.</>
+            : <><strong>Mer än bilen rymmer.</strong> {Amp.fmt(kWh, { digits: 0 })} kWh är mer
+                än ett typiskt elbilsbatteri ({Amp.fmt(i.carBattery, { digits: 0 })} kWh).
+                Anläggningen kan leverera det, men bilen blir full och slutar ladda — det
+                finns alltså gott om kapacitet för de här platserna.</>}
+        </div>
+      )}
+
+      {/* förutsättningar + anläggning */}
+      <div style={{
+        margin: '26px 56px 0 56px',
+        display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 36,
+      }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
+            <Balk width={20} color={BRAND.ink} height={3} style={{ position: 'relative', top: -5 }} />
+            <div style={{ fontFamily: BRAND.serif, fontSize: 18, fontWeight: 500, letterSpacing: -0.2 }}>Utgångsläge</div>
+          </div>
+          {rad('Fastighetstyp', i.fastighet)}
+          {rad('Huvudsäkring', `${i.fuseSizeA} A · 3-fas 400 V`)}
+          {rad('Laddplatser', `${i.outlets} st`)}
+          {rad('Parkeringstid', `${i.parkingHours} h`)}
+        </div>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
+            <Balk width={20} color={BRAND.ink} height={3} style={{ position: 'relative', top: -5 }} />
+            <div style={{ fontFamily: BRAND.serif, fontSize: 18, fontWeight: 500, letterSpacing: -0.2 }}>Anläggningen</div>
+          </div>
+          {rad('SmartHubs', `${o.hubs} × ${Amp.CAP_PER_HUB_KW} kW`)}
+          {/* digits: 0 — skärmen skriver "44 kW mot elnätet", och rapporten skrev
+              43,6. Samma tal, olika avrundning: precis den felklass som gav
+              346 km mot 186 km i granskningen (G1). */}
+          {rad('Elanslutning', `${Amp.fmt(o.servisKW, { digits: 0 })} kW`)}
+          {rad('Effekttak mot elnätet', `${Amp.fmt(o.systemCapKW, { digits: 0 })} kW`)}
+          {rad('Levererat per dygn', `${Amp.fmt(o.totalEnergyDay, { digits: 0 })} kWh`)}
+        </div>
+      </div>
+
+      {/* effektkurvan */}
+      <div style={{ margin: '26px 56px 0 56px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+          <Balk width={20} color={BRAND.ink} height={3} style={{ position: 'relative', top: -5 }} />
+          <div style={{ fontFamily: BRAND.serif, fontSize: 18, fontWeight: 500, letterSpacing: -0.2 }}>Effekten över dygnet</div>
+          <div style={{ fontSize: 10.5, color: BRAND.mute }}>kW per timme</div>
+        </div>
+        <PowerChart hourly={o.hourly} cap={o.effectiveCap} height={96} width={682} />
+        <div style={{ fontSize: 10, lineHeight: 1.55, color: BRAND.ink2, marginTop: 8 }}>
+          Alla {i.outlets} bilar laddar inte samtidigt för full effekt. SmartHub mäter
+          fastighetens förbrukning och fördelar laddningen över dygnet (dynamisk
+          lastbalansering), så att huvudsäkringen aldrig överbelastas — det är därför
+          {' '}{Amp.fmt(o.systemCapKW, { digits: 0 })} kW räcker till {i.outlets} platser
+          utan servisutökning.
+        </div>
+      </div>
+
+      {/* CTA — fyller utrymmet under diagrammet och ger kunden en väg vidare.
+          UTGÅR NÄR EN VARNING VISAS, samma mönster som PDFEditorials miljöbild.
+          Antagandeblocket nedan är absolut placerat (bottom: 74) medan CTA:n
+          ligger i flödet: med varningsremsan ovanför sköts CTA:n ner OVANPÅ
+          antagandena — fyra textkrockar, upp till 100 % överlappning, i båda
+          varningsfallen. `scrollHeight = clientHeight` och `klippta 0` var
+          gröna hela tiden; det var krockmätningen från v3.9.5 som såg det.
+          Varningen väger tyngre än en uppmaning att höra av sig. */}
+      {!(forLite || overBatteri) && (
+      <div style={{
+        margin: '26px 56px 0 56px', padding: '18px 22px',
+        background: BRAND.accentWash,
+        display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 96px', gap: 20, alignItems: 'center',
+      }}>
+        <div>
+          <Eyebrow color={BRAND.accentDeep}>Nästa steg</Eyebrow>
+          <div style={{ height: 8 }} />
+          <div style={{ fontSize: 11.5, lineHeight: 1.55, color: BRAND.ink2 }}>
+            Vi tar fram en dimensioneringsplan, kostnadsuppskattning och tidplan utifrån
+            era värden. Skanna koden för att räkna om själva, eller hör av er direkt.
+          </div>
+          <div style={{ height: 10 }} />
+          <div style={{ fontFamily: BRAND.mono, fontSize: 11, color: BRAND.ink }}>{CONTACT_EMAIL}</div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <QRCode size={88} />
+          <div style={{ fontSize: 7.5, letterSpacing: 1, fontFamily: BRAND.mono, color: BRAND.accentDeep, marginTop: 5, textTransform: 'uppercase', fontWeight: 700 }}>Öppna igen</div>
+        </div>
+      </div>
+      )}
+
+      {/* antaganden + friskrivning */}
+      <div style={{
+        position: 'absolute', left: 56, right: 56, bottom: 74,
+      }}>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 6 }}>
+            Antaganden &amp; ansvar
+          </div>
+          <div style={{ fontSize: 9.5, lineHeight: 1.55, color: BRAND.ink2 }}>
+            Räknat på {i.profilLabel.toLowerCase()}sprofil, {Math.round(i.peakOccPct * 100)} % beläggning
+            i topptimmen och hela anslutningen tillgänglig för laddning (ingen befintlig
+            grundlast avdragen). Räckvidd för en genomsnittsbil, {Amp.fmt(i.carKwh100, { digits: 1 })} kWh/100 km
+            vid verklig förbrukning — vintertid går det åt 20–40 % mer.
+            Siffrorna är modellberäkningar på era indata och ersätter inte projektering eller
+            bindande offert från nätägaren. Installation ska utföras av behörig elinstallatör
+            enligt ELSÄK-FS.
+          </div>
+        </div>
+      </div>
+
+      <PDFFooter page={1} total={1} date={data.meta.date} version={data.meta.version} />
+    </Page>
+  );
+}
+
+// --------------------------------------------------------------------------
 // PDFCompare — side-by-side scenario comparison (single A4 page)
 // --------------------------------------------------------------------------
 
@@ -1251,5 +1455,5 @@ function sampleData() {
   };
 }
 
-Object.assign(window, { PDFEditorial, PDFCompare, PDF_PAGE_W: PAGE_W, PDF_PAGE_H: PAGE_H, samplePDFData: sampleData });
+Object.assign(window, { PDFEditorial, PDFCompare, PDFSimple, PDF_PAGE_W: PAGE_W, PDF_PAGE_H: PAGE_H, samplePDFData: sampleData });
 

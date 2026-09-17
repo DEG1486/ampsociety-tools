@@ -1,4 +1,4 @@
-// matt-pdf.mjs — mäter sidöverflöde i kundrapporten, automatiskt.
+﻿// matt-pdf.mjs — mäter sidöverflöde i kundrapporten, automatiskt.
 //
 // Kör:  node laddkalkylator/matt-pdf.mjs
 //       node laddkalkylator/matt-pdf.mjs --behall   (spara sonderna för felsökning)
@@ -90,6 +90,20 @@ const FALL = [
       { name: 'Scenario E', colorSlot: 4, outlets: 162, hubs: 4, capPerHub: 44, systemCap: null, parkingHours: 24, profileKey: 'residential', peakOcc: 1.0 },
       { name: 'Scenario F', colorSlot: 5, outlets: 216, hubs: 5, capPerHub: 44, systemCap: 300, parkingHours: 1, profileKey: 'office', peakOcc: 0.5 },
     ] }],
+  // ENKLA LÄGET (v3.10.0). Egen mall, PDFSimple, en enda A4-sida med id sim-1.
+  // Fyra fall: normalfallet, båda varningarna, och textens värsta läge.
+  ['enkelt läge · BRF 63 A, 40 platser', { ...gemensamt, uiMode: 'simple', outlets: 40,
+    fuseSizeA: 63, parkingHours: 10, profileKey: 'residential', peakOcc: 0.85, occPct: 0.85 }],
+  ['enkelt läge · tunt (120 platser, 25 A)', { ...gemensamt, uiMode: 'simple', outlets: 120,
+    fuseSizeA: 25, parkingHours: 3, profileKey: 'mall', peakOcc: 0.85, occPct: 0.60 }],
+  ['enkelt läge · över batteriet (3 platser, 250 A)', { ...gemensamt, uiMode: 'simple', outlets: 3,
+    fuseSizeA: 250, parkingHours: 24, profileKey: 'flat', peakOcc: 0.60, occPct: 0.55 }],
+  // Textens värsta läge: långt projektnamn OCH den längsta fastighetsetiketten.
+  // Antagandestycket sitter absolut placerat ovanför sidfoten, alltså precis den
+  // konstruktion som lade text ovanpå sidfoten i v3.9.5.
+  ['enkelt läge · långt projektnamn', { ...gemensamt, uiMode: 'simple', outlets: 108,
+    fuseSizeA: 160, parkingHours: 6, profileKey: 'flat', peakOcc: 0.60, occPct: 0.55,
+    projectName: 'Brf Stormhatten · Parkeringshus 2, plan −1 och −2, Kungsholmen' }],
 ];
 
 // String.raw, inte en vanlig template literal: sonden innehåller reguljära
@@ -128,7 +142,7 @@ const SOND = String.raw`
     const ov = document.getElementById('__pdf_print_overlay');
     if (!ov) throw new Error('ingen overlay — exporten returnerade tyst');
     const text = ov.innerText || '';
-    for (const sida of ov.querySelectorAll('[id^="ed-"],[id^="cmp-"]')) {
+    for (const sida of ov.querySelectorAll('[id^="ed-"],[id^="cmp-"],[id^="sim-"]')) {
       const r = sida.getBoundingClientRect();
       let klippta = 0, lagst = 0, lagstText = '';
       const lov = [];

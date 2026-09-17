@@ -228,7 +228,9 @@ async function exportAsPdf(data) {
 
   // Render the PDF template into the overlay
   const root = ReactDOM.createRoot(overlay);
-  const Template = data.mode === 'compare' ? window.PDFCompare : window.PDFEditorial;
+  const Template = data.mode === 'compare' ? window.PDFCompare
+    : data.mode === 'simple' ? window.PDFSimple
+    : window.PDFEditorial;
   // Utan den här kontrollen gav ett saknat eller trasigt mallobjekt tomma A4-sidor
   // i kundens utskrift i stället för ett felmeddelande.
   if (typeof Template !== 'function') {
@@ -318,6 +320,43 @@ if (!window.Amp5Calc || typeof window.Amp5Calc.computeEnergy !== 'function') {
 }
 
 // H6-fix: sanera projektnamn — strippa Unicode bidi-overrides och zero-width-tecken som annars kan vilseleda PDF-rendering.
+// Enkla lägets rapportdata. Egen byggare, inte buildPdfData med fält borttagna:
+// PDFEditorial förutsätter beläggningsprofil, energibehov, elnätsbedömning och
+// investeringskalkyl, och enkla läget har medvetet inget av det.
+//
+// `mode: 'simple'` är vad exportAsPdf väljer mall på. Fältet krockar inte med
+// app-lägena energy/hubs/compare — det här objektet når aldrig dem.
+function buildSimplePdfData({ res, fastighet, profilLabel, fuseSizeA, parkingHours,
+  peakOcc, car, reportId, projectName }) {
+  const C = window.Amp5Calc;
+  return {
+    mode: 'simple',
+    inputs: {
+      fastighet, profilLabel, fuseSizeA,
+      outlets: res.outlets,
+      parkingHours,
+      peakOccPct: peakOcc,
+      carKwh100: schablonKwh100(),
+      carBattery: schablonBatteri(),
+    },
+    outputs: {
+      perOutletKWh: res.perOutletKWh,
+      hubs: res.hubs,
+      servisKW: res.servisKW,
+      systemCapKW: res.systemCapKW,
+      totalEnergyDay: res.energy.totalEnergyDay,
+      effectiveCap: res.energy.effectiveCap,
+      hourly: res.energy.hourly,
+    },
+    meta: {
+      projectName: sanitizeProjectName(projectName || ''),
+      date: new Date().toLocaleDateString('sv-SE'),
+      reportId,
+      version: APP_VERSION,
+    },
+  };
+}
+
 function sanitizeProjectName(s) {
   if (typeof s !== 'string') return '';
   // Strippa: LRM/RLM (200E,200F), embedding/override (202A-202E), isolates (2066-2069), ZWSP/ZWNJ/ZWJ (200B-200D)
@@ -668,6 +707,11 @@ function InstrumentVariant() {
         outlets={outlets} setOutlets={setOutlets}
         carAcLimit={carAcLimit} efficiency={efficiency} strategy={strategy}
         setUiMode={handleSetUiMode}
+        projectName={projectName}
+        onExportPdf={(res, fastighet, profilLabel) => exportAsPdf(buildSimplePdfData({
+          res, fastighet, profilLabel, fuseSizeA, parkingHours, peakOcc,
+          reportId, projectName,
+        }))}
       />
     );
   }
@@ -837,6 +881,12 @@ function SimpleMode(p) {
   const kWh = res.perOutletKWh;
   const km = Math.round(kwhTillKm(kWh));
   const hubTxt = res.hubs === 1 ? '1 SmartHub' : res.hubs + ' SmartHubs';
+  const [exporterar, setExporterar] = React.useState(false);
+  const exportera = async () => {
+    setExporterar(true);
+    try { await p.onExportPdf(res, preset.label, profile.label); }
+    finally { setExporterar(false); }
+  };
   const nattEllerDag = p.profileKey === 'residential' ? 'natt' : 'dag';
 
   // Två ärlighetsspärrar på svaret. Båda finns i de andra vyerna och måste
@@ -857,12 +907,20 @@ function SimpleMode(p) {
         {/* Huvud */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28, gap: 20 }}>
           <img src={window.Amp5Assets.logo} alt="AmpSociety" style={{ display: 'block', height: 30, width: 'auto' }} />
-          <button onClick={() => p.setUiMode('advanced')}
-            style={{
-              background: 'transparent', border: '1px solid ' + I.line, color: I.ink2,
-              padding: '7px 13px', borderRadius: 2, cursor: 'pointer',
-              fontFamily: I.mono, fontSize: 10.5, letterSpacing: 1.1, textTransform: 'uppercase',
-            }}>Avancerat läge</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => p.setUiMode('advanced')}
+              style={{
+                background: 'transparent', border: '1px solid ' + I.line, color: I.ink2,
+                padding: '7px 13px', borderRadius: 2, cursor: 'pointer',
+                fontFamily: I.mono, fontSize: 10.5, letterSpacing: 1.1, textTransform: 'uppercase',
+              }}>Avancerat läge</button>
+            <button onClick={exportera}
+              style={{
+                background: I.ink, border: '1px solid ' + I.ink, color: '#fff',
+                padding: '7px 13px', borderRadius: 2, cursor: 'pointer',
+                fontFamily: I.mono, fontSize: 10.5, letterSpacing: 1.1, textTransform: 'uppercase',
+              }}>{exporterar ? 'Genererar…' : 'Spara som PDF'}</button>
+          </div>
         </div>
 
         <div style={{ fontFamily: I.serif, fontSize: 44, fontWeight: 500, letterSpacing: -0.8, lineHeight: 1.05, color: I.ink }}>

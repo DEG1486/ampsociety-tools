@@ -654,6 +654,53 @@ lagg('enkelt läge', 'UI:t frågar efter platser och svarar i km', () => {
   // står kvar. (Upptäckt vid mutationstest av just den här spärren.)
   if (!/propertyTypeEnkelt = matchPropertyTypeUtanTid\(/.test(VARIANT))
     fel.push('enkla lägets chip matchas med parkingHours igen — det slocknar då vid justering');
+  return fel;
+});
+
+lagg('enkelt läge', 'PDF-exporten finns och är hel', () => {
+  const fel = [];
+  // Mallen, databyggaren, valet i exportAsPdf och knappen — fyra länkar, och
+  // bryts någon av dem ger knappen antingen ingenting eller tomma A4-sidor.
+  if (!/function PDFSimple\(/.test(PDF)) fel.push('PDFSimple saknas i _33_pdf.jsx');
+  if (!/PDFEditorial, PDFCompare, PDFSimple/.test(PDF)) fel.push('PDFSimple exponeras inte på window');
+  if (!/function buildSimplePdfData\(/.test(VARIANT)) fel.push('buildSimplePdfData saknas');
+  if (!/data\.mode === 'simple' \? window\.PDFSimple/.test(VARIANT))
+    fel.push('exportAsPdf väljer inte PDFSimple — enkla läget får PDFEditorial, som saknar dess fält');
+  if (!/Spara som PDF/.test(VARIANT)) fel.push('exportknappen saknas');
+
+  // VARNINGSPARITET — samma krav som ställs mellan skärmen och PDFEditorial.
+  // Enkla lägets två ärlighetsspärrar måste finnas i BÅDA vyerna: utan
+  // energibehov kan talet bli fysiskt omöjligt (1 352 km i testfallet), och en
+  // rapport som tiger om det är värre än en skärm som gör det.
+  for (const [namn, re] of [['tunt', /Tunt\./], ['batteri', /Mer än bilen rymmer\./]]) {
+    if (!re.test(VARIANT)) fel.push(`varningen "${namn}" saknas på skärmen`);
+    if (!re.test(PDF)) fel.push(`varningen "${namn}" saknas i PDFSimple — rapporten är tystare än skärmen`);
+  }
+
+  // CTA:n måste vika för varningen. Antagandeblocket är absolut placerat medan
+  // CTA:n ligger i flödet: utan villkoret sköts CTA:n ner OVANPÅ antagandena,
+  // fyra textkrockar i båda varningsfallen, medan scrollHeight och klippta var
+  // gröna. Mätt av matt-pdf.mjs, men källkodsspärren säger VARFÖR.
+  if (!/\{!\(forLite \|\| overBatteri\) && \(/.test(PDF))
+    fel.push('PDFSimples CTA viker inte för varningen — den hamnar ovanpå antagandeblocket');
+
+  // Paritet i avrundning: skärmen skriver "44 kW mot elnätet" (digits: 0).
+  // Med digits: 1 stod 43,6 i rapporten — samma tal, två siffror (G1).
+  if (/systemCapKW, \{ digits: 1 \}/.test(PDF))
+    fel.push('PDFSimple avrundar effekttaket till en decimal — skärmen visar heltal');
+  return fel;
+});
+
+lagg('enkelt läge', 'sidöverflöde mäts för PDFSimple', () => {
+  const fel = [];
+  const M = las('matt-pdf.mjs');
+  // En mall som inte mäts är en mall som spiller över tyst — det är hela skälet
+  // till att matt-pdf.mjs finns.
+  if (!/id\^="sim-"/.test(M)) fel.push('matt-pdf.mjs plockar inte upp sim-sidor — PDFSimple mäts aldrig');
+  if (!/enkelt läge · BRF/.test(M)) fel.push('normalfallet saknas bland matt-pdf:s fall');
+  for (const namn of ['tunt', 'över batteriet', 'långt projektnamn']) {
+    if (!M.includes(namn)) fel.push(`matt-pdf saknar fallet "${namn}"`);
+  }
   // Utan energibehov kan en bil ladda hela parkeringstiden, och talet blir
   // fysiskt omöjligt (922 km, granskningen 2026-09-12). Varningen är enda
   // spärren mot det i den här vyn.
