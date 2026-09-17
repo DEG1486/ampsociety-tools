@@ -746,10 +746,23 @@ lagg('enkelt läge', 'PDF-exporten finns och är hel', () => {
   if (!/\{!\(forLite \|\| overBatteri\) && \(/.test(PDF))
     fel.push('PDFSimples CTA viker inte för varningen — den hamnar ovanpå antagandeblocket');
 
-  // Paritet i avrundning: skärmen skriver "44 kW mot elnätet" (digits: 0).
-  // Med digits: 1 stod 43,6 i rapporten — samma tal, två siffror (G1).
-  if (/systemCapKW, \{ digits: 1 \}/.test(PDF))
-    fel.push('PDFSimple avrundar effekttaket till en decimal — skärmen visar heltal');
+  // PARITET I AVRUNDNING. Kravet är inte ett visst antal decimaler utan att
+  // vyerna visar SAMMA tal: under en period skrev skärmen "44 kW" och rapporten
+  // "43,6" om samma effekttak (G1-mönstret i miniatyr). Daniel valde 43,6 på
+  // båda — beräkningen använder 43,648, och då får ingen vy visa ett tredje tal.
+  const dec = (txt) => {
+    const t = [...txt.matchAll(/systemCapKW,?\s*\{ digits: (\d) \}/g)].map((m) => m[1]);
+    return [...new Set(t)];
+  };
+  const skarmDec = dec(VARIANT).sort().join(',');
+  const pdfDec = dec(PDF).sort().join(',');
+  if (skarmDec !== pdfDec) {
+    fel.push(`effekttaket visas med olika precision: skärmen digits ${skarmDec || '(inga)'}, `
+      + `rapporten digits ${pdfDec || '(inga)'} — samma tal måste se likadant ut i båda`);
+  }
+  if (skarmDec && skarmDec !== '1') {
+    fel.push(`effekttaket visas med digits ${skarmDec}; valt format är en decimal (43,6 kW)`);
+  }
   return fel;
 });
 

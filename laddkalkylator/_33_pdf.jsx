@@ -826,11 +826,12 @@ function PDFSimple({ data }) {
             <div style={{ fontFamily: BRAND.serif, fontSize: 18, fontWeight: 500, letterSpacing: -0.2 }}>Anläggningen</div>
           </div>
           {rad('SmartHubs', `${o.hubs} × ${Amp.CAP_PER_HUB_KW} kW`)}
-          {/* digits: 0 — skärmen skriver "44 kW mot elnätet", och rapporten skrev
-              43,6. Samma tal, olika avrundning: precis den felklass som gav
-              346 km mot 186 km i granskningen (G1). */}
-          {rad('Elanslutning', `${Amp.fmt(o.servisKW, { digits: 0 })} kW`)}
-          {rad('Effekttak mot elnätet', `${Amp.fmt(o.systemCapKW, { digits: 0 })} kW`)}
+          {/* EN DECIMAL, och skärmen gör likadant. Paritet är kravet, inte
+              antalet decimaler: en period visade rapporten 43,6 och skärmen 44
+              (G1-mönstret i miniatyr). Daniel valde 43,6 på båda — beräkningen
+              använder 43,648, och då ska ingen vy visa ett tredje tal. */}
+          {rad('Elanslutning', `${Amp.fmt(o.servisKW, { digits: 1 })} kW`)}
+          {rad('Effekttak mot elnätet', `${Amp.fmt(o.systemCapKW, { digits: 1 })} kW`)}
           {rad('Levererat per dygn', `${Amp.fmt(o.totalEnergyDay, { digits: 0 })} kWh`)}
         </div>
       </div>
@@ -847,7 +848,7 @@ function PDFSimple({ data }) {
           Alla {i.outlets} bilar laddar inte för full effekt på en gång. SmartHub mäter
           fastighetens förbrukning och fördelar effekten mellan bilarna inom laddfönstret
           (dynamisk lastbalansering), så att huvudsäkringen aldrig överbelastas — det är
-          därför {Amp.fmt(o.systemCapKW, { digits: 0 })} kW räcker till {i.outlets} platser
+          därför {Amp.fmt(o.systemCapKW, { digits: 1 })} kW räcker till {i.outlets} platser
           utan servisutökning.
         </div>
       </div>
@@ -898,7 +899,7 @@ function PDFSimple({ data }) {
           </div>
           <div style={{ fontSize: 9.5, lineHeight: 1.55, color: BRAND.ink2 }}>
             Energi per bil = effekttak × laddfönster / platser:
-            {' '}{Amp.fmt(o.systemCapKW, { digits: 0 })} kW × {i.parkingHours} h / {i.outlets} platser.
+            {' '}{Amp.fmt(o.systemCapKW, { digits: 1 })} kW × {i.parkingHours} h / {i.outlets} platser.
             En laddning per plats och dygn. Hela anslutningen räknas som tillgänglig —
             ingen befintlig grundlast avdragen. Räckvidd för en genomsnittsbil,
             {' '}{Amp.fmt(i.carKwh100, { digits: 1 })} kWh/100 km vid verklig förbrukning;

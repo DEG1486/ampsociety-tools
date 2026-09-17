@@ -996,7 +996,7 @@ function SimpleMode(p) {
             inom {res.parkingHours} timmars laddfönster.
           </div>
           <div style={{ fontSize: 12.5, color: I.mute, marginTop: 8, fontFamily: I.mono }}>
-            {hubTxt} · {C.fmt(res.systemCapKW, { digits: 0 })} kW mot elnätet · hela anslutningen används
+            {hubTxt} · {C.fmt(res.systemCapKW, { digits: 1 })} kW mot elnätet · hela anslutningen används
           </div>
 
           {res.limitedByCar && !forLite && (
@@ -1046,7 +1046,7 @@ function SimpleMode(p) {
           <div style={{ fontSize: 11.5, color: I.mute, marginTop: 10, lineHeight: 1.55 }}>
             Alla {res.outlets} bilar laddar inte för full effekt på en gång — Amp5 fördelar
             effekten mellan dem inom laddfönstret och håller anläggningen under taket.
-            Det är därför {C.fmt(res.systemCapKW, { digits: 0 })} kW räcker till {res.outlets} platser.
+            Det är därför {C.fmt(res.systemCapKW, { digits: 1 })} kW räcker till {res.outlets} platser.
           </div>
         </div>
 
@@ -1090,6 +1090,7 @@ function SimpleStep({ n, title, hint, children }) {
 // behöva öppna ett "Annan"-fält. Serviseffekten skrivs ut i klartext så att valet
 // går att kontrollera mot elräkningen.
 function SimpleFusePicker({ value, onChange }) {
+  const C = window.Amp5Calc;
   const val = [25, 35, 50, 63, 80, 100, 125, 160, 200, 250];
   const finns = val.includes(value);
   return (
@@ -1112,7 +1113,7 @@ function SimpleFusePicker({ value, onChange }) {
       </div>
       <div style={{ fontSize: 11.5, color: I.mute, marginTop: 8, fontFamily: I.mono }}>
         {!finns && <span style={{ color: I.accentDeep }}>Egen storlek: {value} A · </span>}
-        ≈ {Math.round(Math.sqrt(3) * 400 * value / 1000)} kW total elanslutning
+        ≈ {C.fmt(Math.sqrt(3) * 400 * value / 1000, { digits: 1 })} kW total elanslutning
       </div>
     </div>
   );
@@ -3108,7 +3109,11 @@ function HourlyChart({ energy, utanEfterfragan }) {
         {!utanEfterfragan && (energy.peakReductionKW || 0) >= 0.5 && (
           <Stat small label="Reduktion" value={`−${C.fmt(energy.peakReductionKW, {digits: 0})} kW`} />
         )}
-        <Stat small label={takEtikett} value={`${C.fmt(cap, {digits: 0})} kW`} />
+        {/* Decimal bara när taket inte är ett jämnt tal: enkla lägets tak är
+            servisens exakta effekt (43,6 kW för 63 A) medan Avancerats är
+            hubbar × 44. Utan det visade diagrammet 44 bredvid en stödrad som
+            sa 43,6 — samma tal, två siffror. */}
+        <Stat small label={takEtikett} value={`${C.fmt(cap, { digits: Number.isInteger(cap) ? 0 : 1 })} kW`} />
       </div>
       <div style={{ position: 'relative', height: 160, display: 'flex', alignItems: 'flex-end', gap: 3 }}>
         <div style={{
