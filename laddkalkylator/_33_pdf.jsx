@@ -774,9 +774,12 @@ function PDFSimple({ data }) {
           <Eyebrow style={{ marginBottom: 8 }}>Varje bil får</Eyebrow>
           <Num value={km.toLocaleString('sv-SE')} unit="km" size={104} weight={500} />
           <div style={{ height: 10 }} />
+          {/* "alla N platser samtidigt" stod här och motsade bildtexten under
+              diagrammet ("laddar inte samtidigt för full effekt") — samma
+              rapport, två oförenliga påståenden. */}
           <div style={{ fontFamily: BRAND.serif, fontStyle: 'italic', fontSize: 16, color: BRAND.accentDeep, lineHeight: 1.35, maxWidth: 340 }}>
-            per laddning — alla {i.outlets} platser samtidigt,
-            {' '}{Amp.fmt(kWh, { digits: 1 })} kWh per bil
+            per bil och dygn · {Amp.fmt(kWh, { digits: 1 })} kWh
+            <br/>alla {i.outlets} platser, inom {i.parkingHours} h laddfönster
           </div>
         </div>
         <div style={{ height: 172, position: 'relative', overflow: 'hidden', background: '#272120' }}>
@@ -815,7 +818,7 @@ function PDFSimple({ data }) {
           {rad('Fastighetstyp', i.fastighet)}
           {rad('Huvudsäkring', `${i.fuseSizeA} A · 3-fas 400 V`)}
           {rad('Laddplatser', `${i.outlets} st`)}
-          {rad('Parkeringstid', `${i.parkingHours} h`)}
+          {rad('Laddfönster per dygn', `${i.parkingHours} h`)}
         </div>
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
@@ -833,18 +836,18 @@ function PDFSimple({ data }) {
       </div>
 
       {/* effektkurvan */}
-      <div style={{ margin: '26px 56px 0 56px' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+      <div style={{ margin: '22px 56px 0 56px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 9 }}>
           <Balk width={20} color={BRAND.ink} height={3} style={{ position: 'relative', top: -5 }} />
           <div style={{ fontFamily: BRAND.serif, fontSize: 18, fontWeight: 500, letterSpacing: -0.2 }}>Effekten över dygnet</div>
           <div style={{ fontSize: 10.5, color: BRAND.mute }}>kW per timme</div>
         </div>
         <PowerChart hourly={o.hourly} cap={o.effectiveCap} height={96} width={682} />
         <div style={{ fontSize: 10, lineHeight: 1.55, color: BRAND.ink2, marginTop: 8 }}>
-          Alla {i.outlets} bilar laddar inte samtidigt för full effekt. SmartHub mäter
-          fastighetens förbrukning och fördelar laddningen över dygnet (dynamisk
-          lastbalansering), så att huvudsäkringen aldrig överbelastas — det är därför
-          {' '}{Amp.fmt(o.systemCapKW, { digits: 0 })} kW räcker till {i.outlets} platser
+          Alla {i.outlets} bilar laddar inte för full effekt på en gång. SmartHub mäter
+          fastighetens förbrukning och fördelar effekten mellan bilarna inom laddfönstret
+          (dynamisk lastbalansering), så att huvudsäkringen aldrig överbelastas — det är
+          därför {Amp.fmt(o.systemCapKW, { digits: 0 })} kW räcker till {i.outlets} platser
           utan servisutökning.
         </div>
       </div>
@@ -859,9 +862,9 @@ function PDFSimple({ data }) {
           Varningen väger tyngre än en uppmaning att höra av sig. */}
       {!(forLite || overBatteri) && (
       <div style={{
-        margin: '26px 56px 0 56px', padding: '18px 22px',
+        margin: '18px 56px 0 56px', padding: '13px 20px',
         background: BRAND.accentWash,
-        display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 96px', gap: 20, alignItems: 'center',
+        display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 84px', gap: 18, alignItems: 'center',
       }}>
         <div>
           <Eyebrow color={BRAND.accentDeep}>Nästa steg</Eyebrow>
@@ -874,28 +877,43 @@ function PDFSimple({ data }) {
           <div style={{ fontFamily: BRAND.mono, fontSize: 11, color: BRAND.ink }}>{CONTACT_EMAIL}</div>
         </div>
         <div style={{ textAlign: 'center' }}>
-          <QRCode size={88} />
+          <QRCode size={76} />
           <div style={{ fontSize: 7.5, letterSpacing: 1, fontFamily: BRAND.mono, color: BRAND.accentDeep, marginTop: 5, textTransform: 'uppercase', fontWeight: 700 }}>Öppna igen</div>
         </div>
       </div>
       )}
 
-      {/* antaganden + friskrivning */}
+      {/* Antaganden + friskrivning i TVÅ KOLUMNER, i flödet.
+          Konstruktionen har krockat två gånger: som absolut placerat block växte
+          det uppåt mot CTA:n, och flyttat till flödet i en enda spalt blev det
+          så högt att det la sig ovanpå sidfoten — samma fel som v3.9.5.
+          Två kolumner halverar höjden, och i flödet kan ingenting överlappa. */}
       <div style={{
-        position: 'absolute', left: 56, right: 56, bottom: 74,
+        margin: '14px 56px 0 56px',
+        display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 26,
       }}>
         <div>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 6 }}>
-            Antaganden &amp; ansvar
+            Så räknas det
           </div>
           <div style={{ fontSize: 9.5, lineHeight: 1.55, color: BRAND.ink2 }}>
-            Räknat på {i.profilLabel.toLowerCase()}sprofil, {Math.round(i.peakOccPct * 100)} % beläggning
-            i topptimmen och hela anslutningen tillgänglig för laddning (ingen befintlig
-            grundlast avdragen). Räckvidd för en genomsnittsbil, {Amp.fmt(i.carKwh100, { digits: 1 })} kWh/100 km
-            vid verklig förbrukning — vintertid går det åt 20–40 % mer.
-            Siffrorna är modellberäkningar på era indata och ersätter inte projektering eller
-            bindande offert från nätägaren. Installation ska utföras av behörig elinstallatör
-            enligt ELSÄK-FS.
+            Energi per bil = effekttak × laddfönster / platser:
+            {' '}{Amp.fmt(o.systemCapKW, { digits: 0 })} kW × {i.parkingHours} h / {i.outlets} platser.
+            En laddning per plats och dygn. Hela anslutningen räknas som tillgänglig —
+            ingen befintlig grundlast avdragen. Räckvidd för en genomsnittsbil,
+            {' '}{Amp.fmt(i.carKwh100, { digits: 1 })} kWh/100 km vid verklig förbrukning;
+            vintertid går det åt 20–40 % mer.
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: BRAND.mute, marginBottom: 6 }}>
+            Ansvar &amp; risker
+          </div>
+          <div style={{ fontSize: 9.5, lineHeight: 1.55, color: BRAND.ink2 }}>
+            Siffrorna är modellberäkningar på era indata och ersätter inte projektering
+            eller bindande offert från nätägaren. Verkligt utfall styrs av fordonsmix,
+            årstid och faktiskt laddbeteende. Installation ska utföras av behörig
+            elinstallatör enligt ELSÄK-FS.
           </div>
         </div>
       </div>

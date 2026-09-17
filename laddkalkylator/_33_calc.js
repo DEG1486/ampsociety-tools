@@ -1200,59 +1200,60 @@
   // Frågan: kunden har N parkeringsplatser och en viss huvudsäkring — hur
   // långt kan varje bil köra på en laddning?
   //
-  // RIKTNINGEN ÄR VALD, INTE GIVEN. Första versionen (v3.10.0) gick åt andra
-  // hållet: ange energibehov, få antal platser. Daniel vände på den, och skälet
-  // är starkare än det första: en BRF VET att garaget har 40 platser. Ingen vet
-  // hur långt de boende kör. Man ska mata in det man känner till och få ut det
-  // man undrar över.
+  //     energi per bil = effekttak × parkeringstid / antal platser
   //
-  // Vändningen är också 10-20× snabbare, och det visade sig vara skillnaden
-  // mellan ett reglage som går att dra och ett som inte gör det. Sökningen
-  // bakåt krävde ~18 computeEnergy-anrop (11-26 ms) FÖR VARJE dragsteg; vid
-  // 60 Hz har webbläsaren 16 ms per bildruta, så pucken hakade upp sig i både
-  // Chrome och Edge. Framlänges är det ETT anrop på 1,4 ms.
+  // MODELLEN ÄR MED FLIT EN ANNAN ÄN computeEnergy, och det är ett beslut värt
+  // att förstå innan någon "förbättrar" den här funktionen genom att koppla in
+  // profilmodellen igen.
   //
-  // MODELLVALET SOM GÖR FRÅGAN BESVARBAR — läs det här innan någon "rättar"
-  // systemCap-raden nedan:
+  // Första versionen anropade computeEnergy. Den sprider ut närvaron över hela
+  // dygnet: parkeringstiden blir hur länge EN bil står, beläggningsprofilen
+  // avgör hur många som står där varje timme, och platserna OMSÄTTS. För BRF
+  // med 40 platser och 10 h gav det 1,33 bilar per plats och dygn, en
+  // anläggning som arbetar 22,8 av 24 timmar, och 18,7 kWh per laddning.
   //
-  // Elnätsbedömningen dimensionerar sedan v3.9.0 (granskningsfynd B1) mot vad
-  // anläggningen KAN dra, alltså hubbarnas märkeffekt — inte mot en modellerad
-  // topp som följer av ett beläggningsantagande. Det är rätt för en anläggning
-  // utan effektstyrning, men det gör enkla lägets fråga obesvarbar: en enda
-  // SmartHub à 44 kW spränger redan en 63 A-servis med 20 % grundlast
-  // (34,9 kW tillgängligt). Varje svar hade börjat med "servisutökning krävs".
+  // Daniel räknade 44 kW × 10 h / 40 platser = 11 kWh, kände inte igen svaret,
+  // och frågade varför. Det ledde till två saker: ett osant påstående i UI:t
+  // ("alla 40 platser — samtidigt") och det här beslutet:
   //
-  // Svaret är inte att mjuka upp elnätsbedömningen utan att använda produkten:
-  // med ett konfigurerat fastighetseffekttak, eller dynamisk lastbalansering mot
-  // extern energimätare (ALM, handbok 8.2), begränsas anläggningen mot servisen
-  // i stället för att kräva servisutökning. Det är precis vad GridAssessment
-  // redan säger på skärmen när limitedByInstalled är sann. Det här läget
-  // FÖRUTSÄTTER därför den konfigurationen och sätter taket därefter:
+  //   "När vi säger parkeringstid så räknar vi PER DYGN, det blir enklast att
+  //    förstå. Bostad 15 h parkeringstid per dygn. Dvs man räknar inte med att
+  //    det sprids ut 15 h så att hela dygnet kan nyttjas."   — 2026-09-17
   //
-  //     systemCap = HELA den tillgängliga effekten
+  // Alltså: EN laddning per plats och dygn, och laddfönstret är parkeringstiden.
+  // Talet går att räkna efter på en servett, vilket är hela poängen med läget.
+  // Avancerat behåller profilmodellen — där är frågan en annan (hur ser lasten
+  // ut över dygnet när närvaron varierar), och där är computeEnergy rätt.
   //
-  // INGEN MARGINAL DRAS AV (Daniel 2026-09-17: "Nu är det 10% marginal mot
-  // säkring, det behövs inte"). GRID_MARGIN finns för att en anläggning UTAN
-  // effektstyrning ska ha luft kvar när lasten varierar. Här är premissen den
-  // motsatta: ALM mäter fastighetens förbrukning och håller laddningen under
-  // taket aktivt, så anläggningen kan per konstruktion inte överskrida det.
-  // Huvudsäkringen ÄR gränsen, och 63 A betyder 44 kW.
+  // MODELLVALET FÖR EFFEKTTAKET — läs det här innan någon "rättar" systemCap:
   //
-  // FÖLJD ATT KÄNNA TILL: resultatet landar på status 'marginal', inte 'ok',
-  // eftersom grön status kräver GRID_MARGIN ledigt. Enkla läget visar ingen
-  // elnätsstatus, så det syns bara för den som växlar till Avancerat — där
-  // samma anläggning får rubriken "Marginellt: knappt tillräcklig kapacitet".
-  // Det är ett medvetet val, inte en glömd paritet: statusen får aldrig bli
-  // 'upgrade' (se spärren i test-fynd.mjs).
+  // Elnätsbedömningen dimensionerar sedan v3.9.0 (fynd B1) mot vad anläggningen
+  // KAN dra, alltså hubbarnas märkeffekt. Det gör enkla lägets fråga obesvarbar:
+  // en enda SmartHub à 44 kW spränger redan en 63 A-servis. Svaret är inte att
+  // mjuka upp bedömningen utan att använda produkten — med dynamisk
+  // lastbalansering mot extern energimätare (ALM, handbok 8.2) begränsas
+  // anläggningen mot servisen i stället för att kräva utökning.
+  //
+  // Ingen marginal dras av (Daniel 2026-09-17: "10 % marginal mot säkring, det
+  // behövs inte"): ALM håller taket aktivt, så huvudsäkringen ÄR gränsen och
+  // 63 A betyder 44 kW. Följden är att elnätsstatus blir 'marginal', inte 'ok';
+  // spärren i test-fynd.mjs kräver därför bara att den aldrig blir 'upgrade'.
+  //
+  // FOTNOT OM 6 A-GOLVET: med många platser på ett litet tak kan energin per bil
+  // motsvara mindre än 6 A kontinuerligt, och Amp5 laddar aldrig under 6 A
+  // (handbok 8.3.1) — i verkligheten laddar färre bilar åt gången och de andra
+  // köar. Energin per bil är ändå total/antal, så talet står sig; det är bara
+  // ordet "samtidigt" som inte gör det. UI:t påstår därför inte det.
   //
   // inputs:
   //   fuseSizeA        — servissäkring (A), 3-fas 400 V
   //   existingLoadPct  — andel av servisen som redan är belastad (0–1)
-  //   outlets          — antal laddplatser kunden har/vill ha. DET HÄR är
-  //                      reglaget användaren drar i.
-  //   parkingHours     — typisk parkeringstid (h)
-  //   profileHours     — närvaroprofil, 24 värden (PROFILES[x].hours)
-  //   peakOccupancyPct — beläggningsgrad i profilens topp (0–1)
+  //   outlets          — antal laddplatser (reglaget användaren drar i)
+  //   parkingHours     — laddfönster per dygn (h)
+  //   profileHours     — närvaroprofil, 24 värden; används BARA för att placera
+  //                      laddfönstret på dygnet, inte för att forma efterfrågan
+  //   hwLimitKW        — bilens AC-tak (kW)
+  //   efficiency       — verkningsgrad nät → uttag
   function computeSimple(inp) {
     const num = (v, d) => (Number.isFinite(v) ? v : d);
     const fuse = Math.max(1, num(inp.fuseSizeA, 63));
@@ -1263,39 +1264,84 @@
     const systemCapKW = availableKW;
 
     const capPerHub = Math.min(CAP_PER_HUB_KW, Math.max(1, num(inp.capPerHub, CAP_PER_HUB_KW)));
-    const occ = Math.max(0, Math.min(1, num(inp.peakOccupancyPct, 0)));
     const outlets = Math.max(1, Math.floor(num(inp.outlets, 1)));
+    const L = Math.min(24, Math.max(1, Math.round(num(inp.parkingHours, 1))));
+    const eff = Math.max(0.5, Math.min(1, num(inp.efficiency, DEFAULT_EFFICIENCY)));
+    const hwLimit = Math.max(0.1, num(inp.hwLimitKW, HW_LIMIT_KW));
 
-    // Hubbarna följer EFFEKTEN servisen bär, inte bara uttagsantalet. Med enbart
-    // autoräkningen (ceil(n / 54)) blev en ensam hub à 44 kW taket långt innan
-    // servisen var slut: en 250 A-servis hade levererat lika lite som en 100 A.
-    // En installatör köper så många hubbar som servisen bär.
+    // --- Energin per bil ---------------------------------------------------
+    // Anläggningens effekt delad på platserna, under laddfönstret. Två tak:
+    //   1. vad anläggningen kan leverera: systemCap × L, fördelat på outlets
+    //   2. vad bilen kan ta emot: dess AC-laddare × L
+    const franNatetPerBil = (systemCapKW * L) / outlets;      // kWh, nätsidigt
+    const perOutletKWh = Math.min(franNatetPerBil * eff, hwLimit * L);
+    const totalEnergyDay = perOutletKWh * outlets;            // levererat
+    const totalEnergyFromGrid = totalEnergyDay / eff;
+    // Binder bilens tak ligger anläggningen under sitt eget effekttak.
+    const effektKW = Math.min(systemCapKW, totalEnergyFromGrid / L);
+
+    // --- Laddfönstret ------------------------------------------------------
+    // L sammanhängande timmar där profilen har flest bilar på plats. Profilen
+    // används alltså bara för att PLACERA fönstret på dygnet, inte för att
+    // forma efterfrågan — bostadsprofilen lägger det över natten, kontorets
+    // mitt på dagen. Utan profil: från midnatt.
+    const profil = Array.isArray(inp.profileHours) && inp.profileHours.length === 24
+      ? inp.profileHours.map((x) => Math.max(0, num(x, 0)))
+      : null;
+    let start = 0;
+    if (profil) {
+      let bast = -1;
+      for (let s = 0; s < 24; s++) {
+        let summa = 0;
+        for (let k = 0; k < L; k++) summa += profil[(s + k) % 24];
+        if (summa > bast) { bast = summa; start = s; }
+      }
+    }
+    const iFonstret = new Array(24).fill(false);
+    for (let k = 0; k < L; k++) iFonstret[(start + k) % 24] = true;
+    const hourly = iFonstret.map((p) => (p ? effektKW : 0));
+
+    // Okontrollerad efterfrågan: alla bilar drar sitt eget maxtak samtidigt.
+    // Skillnaden mot hourly ÄR lastbalanseringens bidrag, och den är stor —
+    // det är den som gör att anläggningen ryms i servisen.
+    const efterfraganKW = outlets * hwLimit;
+    const hourlyDemand = iFonstret.map((p) => (p ? efterfraganKW : 0));
+
     const hubs = Math.max(
       1,
       Math.ceil(systemCapKW / capPerHub),                 // utnyttja servisen
       Math.ceil(outlets / OUTLETS_PER_HUB),               // fysiska uttag (54/hub)
-      Math.ceil((outlets * occ) / MAX_SESSIONS_PER_HUB),  // simultana sessioner (30/hub)
+      Math.ceil(outlets / MAX_SESSIONS_PER_HUB),          // simultana sessioner (30/hub)
     );
-
-    // Inget sessionNeedKWh: läget FRÅGAR vad bilen hinner få, så ett tak på
-    // svaret vore att svara på sin egen fråga. Bilens AC-tak och parkeringstiden
-    // begränsar ändå, och orimligt stora värden flaggas mot batteriet i UI:t
-    // precis som i de andra lägena.
-    const energy = computeEnergy({
-      outlets, hubs, capPerHub, systemCap: systemCapKW,
-      parkingHours: inp.parkingHours,
-      profileHours: inp.profileHours,
-      peakOccupancyPct: occ,
-      hwLimitKW: inp.hwLimitKW,
-      efficiency: inp.efficiency,
-      strategy: inp.strategy,
-      profileLabel: inp.profileLabel,
-    });
 
     return {
       outlets, hubs, systemCapKW, availableKW, servisKW, existingKW,
-      perOutletKWh: energy.perOutletKWh,
-      energy,
+      perOutletKWh,
+      parkingHours: L,
+      // EN laddning per plats och dygn. Det är hela skillnaden mot
+      // computeEnergy, som låter platserna omsättas — se noten ovan.
+      sessionsPerDay: outlets,
+      sessionsPerOutlet: 1,
+      // Binder bilens AC-tak i stället för anläggningens effekt? Då hjälper
+      // varken fler hubbar eller en större säkring.
+      limitedByCar: hwLimit * L <= franNatetPerBil * eff + 1e-9,
+      laddfonsterStart: start,
+      // Formen HourlyChart och PowerChart förväntar sig. Inget kohortsvep
+      // behövs: modellen är en rektangel, och det är precis vad den ritar.
+      energy: {
+        hourly,
+        hourlyDemand,
+        effectiveCap: systemCapKW,
+        installedCap: hubs * capPerHub,
+        peakPowerKW: effektKW,
+        peakDemandKW: efterfraganKW,
+        peakReductionKW: Math.max(0, efterfraganKW - effektKW),
+        totalEnergyDay,
+        totalEnergyFromGrid,
+        perOutletKWh,
+        hubs,
+        profileLabel: inp.profileLabel,
+      },
     };
   }
 

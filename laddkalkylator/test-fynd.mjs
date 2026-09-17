@@ -636,7 +636,7 @@ lagg('enkelt läge', 'UI:t frågar efter platser och svarar i km', () => {
     fel.push('render-grenen för uiMode=simple saknas — enkelt läge når aldrig SimpleMode');
   if (!/C\.computeSimple\(/.test(VARIANT)) fel.push('SimpleMode anropar inte computeSimple');
   if (!/function SimplePlacesSlider/.test(VARIANT)) fel.push('platsreglaget saknas');
-  if (!/km per laddning/.test(VARIANT)) fel.push('svaret anges inte i km — är riktningen omvänd igen?');
+  if (!/km per dygn/.test(VARIANT)) fel.push('svaret anges inte i km per dygn — är riktningen omvänd igen?');
   // Texterna får inte påstå en marginal som inte längre dras av.
   if (/marginalen mot huvudsäkringen/.test(VARIANT))
     fel.push('enkla läget talar om en säkerhetsmarginal som inte finns');
@@ -654,6 +654,68 @@ lagg('enkelt läge', 'UI:t frågar efter platser och svarar i km', () => {
   // står kvar. (Upptäckt vid mutationstest av just den här spärren.)
   if (!/propertyTypeEnkelt = matchPropertyTypeUtanTid\(/.test(VARIANT))
     fel.push('enkla lägets chip matchas med parkingHours igen — det slocknar då vid justering');
+  return fel;
+});
+
+lagg('enkelt läge', 'påstår aldrig att alla platser laddar samtidigt', () => {
+  // Daniel 2026-09-17: "44 kW gånger parkeringstid delat med uttag stämmer inte
+  // överens mot vad som visas?" Räkningen är rätt resonerad — och avslöjade att
+  // UI:t skrev "alla N platser — samtidigt, varje natt".
+  //
+  // Det är osant. 40 platser som laddar samtidigt under 10 h kräver 75 kW, och
+  // taket är 44. Modellen räknar inte heller så: platserna OMSÄTTS (55 %
+  // beläggning och 10 h per bil ger 1,33 bilar per plats och dygn), och
+  // anläggningen arbetar 22,8 h per dygn — inte parkeringstidens 10.
+  // Rapporten motsade dessutom sig själv: "alla platser samtidigt" ovanför
+  // diagrammet, "laddar inte samtidigt för full effekt" under det.
+  // Matchar de EXAKTA formuleringar som var fel, inte ett brett mönster på
+  // "platser ... samtidigt". Ett brett mönster träffar kommentarerna ovanför —
+  // inklusive den här spärrens egen förklaring. Första försöket hade dessutom
+  // ett BACKSPACE-tecken mitt i regexen (ordgränsen tappade sin backslash på
+  // vägen genom verktygskedjan), så den kunde aldrig matcha någonting alls.
+  const fel = [];
+  for (const [namn, txt, dalig] of [
+    ['skärmen', VARIANT, 'platser</strong> — samtidigt'],
+    ['PDFSimple', PDF, 'platser samtidigt,'],
+  ]) {
+    if (txt.includes(dalig)) {
+      fel.push(`${namn} påstår att alla platser laddar samtidigt ("${dalig}") — `
+        + 'det kräver mer effekt än taket, och modellen räknar inte så');
+    }
+  }
+  // Ersättningen måste finnas, annars är talet borta helt.
+  if (!VARIANT.includes('per bil och dygn')) fel.push('skärmen anger inte energin per bil och dygn');
+  if (!PDF.includes('per bil och dygn')) fel.push('PDFSimple anger inte energin per bil och dygn');
+  // Och laddfönstret måste nämnas — utan det är "per dygn" tvetydigt.
+  if (!/laddfönster/.test(VARIANT)) fel.push('skärmen nämner inte laddfönstret');
+  if (!/laddfönster/.test(PDF)) fel.push('PDFSimple nämner inte laddfönstret');
+  // EN LADDNING PER PLATS OCH DYGN. Det är hela skillnaden mot computeEnergy,
+  // och det är vad Daniel bad om: "när vi säger parkeringstid så räknar vi per
+  // dygn ... man räknar inte med att det sprids ut så att hela dygnet kan
+  // nyttjas". Kopplas profilmodellen in igen börjar platserna omsättas och
+  // sessionsPerDay glider över antalet platser.
+  //
+  // Och talet ska gå att räkna efter på en servett:
+  //     energi per bil = effekttak × laddfönster / platser × verkningsgrad
+  for (const [a, n, L, pk] of [[63, 40, 10, 'residential'], [125, 20, 9, 'office'],
+                               [25, 60, 3, 'mall'], [250, 3, 24, 'flat']]) {
+    const r = C.computeSimple({ fuseSizeA: a, existingLoadPct: 0, outlets: n, parkingHours: L,
+      profileHours: C.PROFILES[pk].hours, hwLimitKW: 11, efficiency: 0.95 });
+    if (r.sessionsPerDay !== n) {
+      fel.push(`${a}A n=${n} L=${L}: ${r.sessionsPerDay} laddningar per dygn, väntat ${n} `
+        + '(en per plats — omsätts platserna igen?)');
+    }
+    const servett = Math.min(r.systemCapKW * L / n * 0.95, 11 * L);
+    if (Math.abs(servett - r.perOutletKWh) / Math.max(1, r.perOutletKWh) > 0.001) {
+      fel.push(`${a}A n=${n} L=${L}: appen ${r.perOutletKWh.toFixed(2)} kWh, `
+        + `servettuträkningen ${servett.toFixed(2)} kWh`);
+    }
+    // Laddfönstret ska vara L timmar, inte dygnet.
+    const timmarMedEffekt = r.energy.hourly.filter((x) => x > 1e-9).length;
+    if (timmarMedEffekt !== L) {
+      fel.push(`${a}A n=${n} L=${L}: anläggningen arbetar ${timmarMedEffekt} h, väntat ${L}`);
+    }
+  }
   return fel;
 });
 

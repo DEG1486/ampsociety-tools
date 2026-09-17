@@ -341,6 +341,7 @@ function buildSimplePdfData({ res, fastighet, profilLabel, fuseSizeA, parkingHou
     },
     outputs: {
       perOutletKWh: res.perOutletKWh,
+      sessionsPerDay: res.sessionsPerDay,
       hubs: res.hubs,
       servisKW: res.servisKW,
       systemCapKW: res.systemCapKW,
@@ -983,17 +984,32 @@ function SimpleMode(p) {
               letterSpacing: -4, color: forLite ? I.accentDeep : I.ink, fontFeatureSettings: '"tnum"',
             }}>{C.fmt(km, { digits: 0 })}</div>
             <div style={{ fontFamily: I.serif, fontSize: 30, fontWeight: 500, color: I.ink, letterSpacing: -0.5 }}>
-              km per laddning
+              km per dygn
             </div>
           </div>
+          {/* Ordet "samtidigt" stod här och var osant: med 6 A-golvet laddar
+              inte alla platser på en gång, de turas om inom fönstret. Energin per
+              bil är ändå total/antal, så talet står sig — men formuleringen fick
+              inte lova samtidighet. */}
           <div style={{ fontSize: 15, color: I.ink2, marginTop: 14, lineHeight: 1.5 }}>
-            Alla <strong>{res.outlets} platser</strong> — samtidigt, varje {nattEllerDag}.
-            <span style={{ color: I.mute }}> ({C.fmt(kWh, { digits: 1 })} kWh per bil)</span>
+            <strong>{C.fmt(kWh, { digits: 1 })} kWh</strong> per bil och dygn — alla {res.outlets} platser,
+            inom {res.parkingHours} timmars laddfönster.
           </div>
           <div style={{ fontSize: 12.5, color: I.mute, marginTop: 8, fontFamily: I.mono }}>
             {hubTxt} · {C.fmt(res.systemCapKW, { digits: 0 })} kW mot elnätet · hela anslutningen används
           </div>
 
+          {res.limitedByCar && !forLite && (
+            <div style={{
+              marginTop: 16, padding: '11px 14px', borderRadius: 2,
+              background: I.surface, border: '1px solid ' + I.line,
+              fontSize: 12.5, lineHeight: 1.5, color: I.ink2,
+            }}>
+              <strong>Bilen sätter gränsen här, inte elnätet.</strong> Med {res.parkingHours} timmar
+              och {res.outlets} platser finns mer effekt än bilarna kan ta emot — en större
+              säkring ger inget mer. Fler laddplatser gör det däremot.
+            </div>
+          )}
           {forLite && (
             <div style={{
               marginTop: 16, padding: '11px 14px', borderRadius: 2,
@@ -1028,9 +1044,9 @@ function SimpleMode(p) {
           </div>
           <HourlyChart energy={res.energy} utanEfterfragan />
           <div style={{ fontSize: 11.5, color: I.mute, marginTop: 10, lineHeight: 1.55 }}>
-            Alla {res.outlets} bilar laddar inte samtidigt för full effekt. Amp5 fördelar
-            effekten över dygnet och håller anläggningen under taket — det är därför
-            {' '}{C.fmt(res.systemCapKW, { digits: 0 })} kW räcker till {res.outlets} platser.
+            Alla {res.outlets} bilar laddar inte för full effekt på en gång — Amp5 fördelar
+            effekten mellan dem inom laddfönstret och håller anläggningen under taket.
+            Det är därför {C.fmt(res.systemCapKW, { digits: 0 })} kW räcker till {res.outlets} platser.
           </div>
         </div>
 
