@@ -1229,12 +1229,21 @@
   // redan säger på skärmen när limitedByInstalled är sann. Det här läget
   // FÖRUTSÄTTER därför den konfigurationen och sätter taket därefter:
   //
-  //     systemCap = tillgänglig effekt × (1 − GRID_MARGIN)
+  //     systemCap = HELA den tillgängliga effekten
   //
-  // Faktorn (1 − GRID_MARGIN) gör att resultatet landar på GRÖN elnätsstatus,
-  // inte 'marginal'. Utan den hade enkla läget tigit om elnätet medan Avancerat
-  // visade orange rubrik för samma anläggning — och paritet mellan vyerna är
-  // projektets vanligaste felklass (G1, G7).
+  // INGEN MARGINAL DRAS AV (Daniel 2026-09-17: "Nu är det 10% marginal mot
+  // säkring, det behövs inte"). GRID_MARGIN finns för att en anläggning UTAN
+  // effektstyrning ska ha luft kvar när lasten varierar. Här är premissen den
+  // motsatta: ALM mäter fastighetens förbrukning och håller laddningen under
+  // taket aktivt, så anläggningen kan per konstruktion inte överskrida det.
+  // Huvudsäkringen ÄR gränsen, och 63 A betyder 44 kW.
+  //
+  // FÖLJD ATT KÄNNA TILL: resultatet landar på status 'marginal', inte 'ok',
+  // eftersom grön status kräver GRID_MARGIN ledigt. Enkla läget visar ingen
+  // elnätsstatus, så det syns bara för den som växlar till Avancerat — där
+  // samma anläggning får rubriken "Marginellt: knappt tillräcklig kapacitet".
+  // Det är ett medvetet val, inte en glömd paritet: statusen får aldrig bli
+  // 'upgrade' (se spärren i test-fynd.mjs).
   //
   // inputs:
   //   fuseSizeA        — servissäkring (A), 3-fas 400 V
@@ -1251,7 +1260,7 @@
     const existingPct = Math.max(0, Math.min(0.99, num(inp.existingLoadPct, 0)));
     const existingKW = servisKW * existingPct;
     const availableKW = servisKW - existingKW;
-    const systemCapKW = availableKW * (1 - GRID_MARGIN);
+    const systemCapKW = availableKW;
 
     const capPerHub = Math.min(CAP_PER_HUB_KW, Math.max(1, num(inp.capPerHub, CAP_PER_HUB_KW)));
     const occ = Math.max(0, Math.min(1, num(inp.peakOccupancyPct, 0)));

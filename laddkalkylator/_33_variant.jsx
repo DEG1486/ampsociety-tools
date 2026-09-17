@@ -926,7 +926,7 @@ function SimpleMode(p) {
             <span style={{ color: I.mute }}> ({C.fmt(kWh, { digits: 1 })} kWh per bil)</span>
           </div>
           <div style={{ fontSize: 12.5, color: I.mute, marginTop: 8, fontFamily: I.mono }}>
-            {hubTxt} · {C.fmt(res.servisKW, { digits: 0 })} kW anslutning, {C.fmt(res.systemCapKW, { digits: 0 })} kW till laddning
+            {hubTxt} · {C.fmt(res.systemCapKW, { digits: 0 })} kW mot elnätet · hela anslutningen används
           </div>
 
           {forLite && (
@@ -948,7 +948,7 @@ function SimpleMode(p) {
               <strong>Mer än bilen rymmer.</strong> {C.fmt(kWh, { digits: 0 })} kWh är mer än ett
               typiskt elbilsbatteri ({C.fmt(batteri, { digits: 0 })} kWh) — anläggningen kan
               leverera det, men bilen kan inte ta emot det. I praktiken blir bilen full och
-              slutar ladda. Det finns alltså gott om marginal här.
+              slutar ladda. Anläggningen har alltså gott om kapacitet för de här platserna.
             </div>
           )}
         </div>
@@ -966,8 +966,6 @@ function SimpleMode(p) {
             Alla {res.outlets} bilar laddar inte samtidigt för full effekt. Amp5 fördelar
             effekten över dygnet och håller anläggningen under taket — det är därför
             {' '}{C.fmt(res.systemCapKW, { digits: 0 })} kW räcker till {res.outlets} platser.
-            De {C.fmt(res.servisKW - res.systemCapKW, { digits: 0 })} kW som inte används är
-            marginalen mot huvudsäkringen ({Math.round(C.GRID_MARGIN * 100)} %).
           </div>
         </div>
 
@@ -1119,14 +1117,15 @@ function SimpleDetails({ res, kWh, km, profil, parkingHours, peakOcc, fuseSizeA 
             effekten över tiden i stället.
           </div>
           {rad('Elanslutning (' + fuseSizeA + ' A, 3-fas 400 V)', C.fmt(res.servisKW, { digits: 1 }) + ' kW')}
-          {rad('Marginal mot huvudsäkringen', '−' + C.fmt(res.servisKW - res.systemCapKW, { digits: 1 }) + ' kW  (' + Math.round(C.GRID_MARGIN * 100) + ' %)')}
-          {rad('Effekttak för laddningen', C.fmt(res.systemCapKW, { digits: 1 }) + ' kW')}
+          {rad('Effekttak för laddningen', C.fmt(res.systemCapKW, { digits: 1 }) + ' kW  (hela anslutningen)')}
           {rad('SmartHubs', res.hubs + ' × ' + C.CAP_PER_HUB_KW + ' kW')}
           {rad('Laddplatser', res.outlets + ' st')}
           {rad('Energi per bil och laddning', C.fmt(kWh, { digits: 1 }) + ' kWh  ≈ ' + km + ' km')}
           <div style={{ fontSize: 11, color: I.mute, lineHeight: 1.6, marginTop: 14 }}>
-            Hela anslutningen räknas som tillgänglig för laddning — enkla läget antar
-            ingen befintlig grundlast. Har fastigheten betydande last (hiss, tvättstuga,
+            Hela anslutningen räknas som tillgänglig för laddning: enkla läget antar ingen
+            befintlig grundlast och drar inte av någon säkerhetsmarginal. Lastbalanseringen
+            mäter fastighetens förbrukning och håller laddningen under taket, så
+            huvudsäkringen är gränsen. Har fastigheten betydande egen last (hiss, tvättstuga,
             värme) ska den dras av i Avancerat, och då minskar talet ovan.
             Övriga antaganden ur fastighetstypen: {profil}-profil, {parkingHours} h parkering,
             {' '}{Math.round(peakOcc * 100)} % beläggning i topptimmen. Räckvidden räknas på

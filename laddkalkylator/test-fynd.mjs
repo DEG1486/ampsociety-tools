@@ -498,11 +498,17 @@ const ENKELTSVEP = (() => {
   return ut;
 })();
 
-lagg('enkelt läge', 'svaret ger alltid GRÖN elnätsstatus', () => {
-  // Modellens kärnlöfte. Sätts effekttaket ur servisen får Avancerat läge aldrig
-  // svara "Servisutökning krävs" för samma anläggning — paritet mellan vyerna är
-  // projektets vanligaste felklass (G1, G7). Faller om (1 − GRID_MARGIN)-faktorn
-  // i systemCap tas bort, eller om hubbarna slutar följa effekten.
+lagg('enkelt läge', 'svaret kräver aldrig servisutökning', () => {
+  // Modellens kärnlöfte: enkla läget får aldrig svara "så här långt kommer ni"
+  // om en anläggning som Avancerat skulle kalla för överbelastad. Paritet mellan
+  // vyerna är projektets vanligaste felklass (G1, G7).
+  //
+  // Kravet är 'ok' ELLER 'marginal', inte 'ok' ensamt. Sedan 2026-09-17 dras
+  // ingen GRID_MARGIN av (Daniel: "10 % marginal mot säkring, det behövs inte"),
+  // så taket ligger på exakt servisens märkeffekt och statusen blir per
+  // konstruktion 'marginal'. Det är avsiktligt — ALM håller taket aktivt, och
+  // huvudsäkringen ÄR gränsen. 'upgrade' däremot betyder att servisen inte
+  // räcker, och då ljuger enkla läget.
   const fel = [];
   for (const f of ENKELTSVEP) {
     const g = C.computeGridAssessment({
@@ -510,11 +516,31 @@ lagg('enkelt läge', 'svaret ger alltid GRÖN elnätsstatus', () => {
       systemPeakKW: f.r.energy.peakPowerKW, capPerHub: 44,
       installedHubs: f.r.energy.hubs, installedCapKW: f.r.energy.effectiveCap,
     });
-    if (g.status !== 'ok') {
+    if (g.status === 'upgrade') {
       fel.push(`${f.pk} ${f.a}A last=${f.last} L=${f.L} n=${f.n}: status '${g.status}' `
-        + `(överskott ${g.surplusKW.toFixed(2)} kW av ${g.availableKW.toFixed(1)} tillgängliga)`);
+        + `(underskott ${g.surplusKW.toFixed(2)} kW av ${g.availableKW.toFixed(1)} tillgängliga)`);
       if (fel.length > 3) break;
     }
+  }
+  return fel;
+});
+
+lagg('enkelt läge', 'taket är HELA anslutningen, ingen marginal', () => {
+  // Daniel 2026-09-17: "Nu är det 10% marginal mot säkring, det behövs inte."
+  // 63 A ska betyda 44 kW, inte 39. Faller om GRID_MARGIN smyger tillbaka in i
+  // systemCap — vilket är lätt gjort, eftersom resten av appen använder den.
+  const fel = [];
+  for (const f of ENKELTSVEP) {
+    if (Math.abs(f.r.systemCapKW - f.r.availableKW) > 1e-9) {
+      fel.push(`${f.a}A last=${f.last}: tak ${f.r.systemCapKW.toFixed(2)} kW av `
+        + `${f.r.availableKW.toFixed(2)} tillgängliga — en marginal dras av igen`);
+      if (fel.length > 2) break;
+    }
+  }
+  // Läroboksfallet i klartext: 63 A utan grundlast ska ge hela märkeffekten.
+  const r = enkelt({ fuseSizeA: 63, existingLoadPct: 0 });
+  if (Math.abs(r.systemCapKW - 43.648) > 0.01) {
+    fel.push(`63 A gav ${r.systemCapKW.toFixed(2)} kW till laddning, väntat 43,65 (√3 × 400 × 63)`);
   }
   return fel;
 });
@@ -611,6 +637,9 @@ lagg('enkelt läge', 'UI:t frågar efter platser och svarar i km', () => {
   if (!/C\.computeSimple\(/.test(VARIANT)) fel.push('SimpleMode anropar inte computeSimple');
   if (!/function SimplePlacesSlider/.test(VARIANT)) fel.push('platsreglaget saknas');
   if (!/km per laddning/.test(VARIANT)) fel.push('svaret anges inte i km — är riktningen omvänd igen?');
+  // Texterna får inte påstå en marginal som inte längre dras av.
+  if (/marginalen mot huvudsäkringen/.test(VARIANT))
+    fel.push('enkla läget talar om en säkerhetsmarginal som inte finns');
   // Utan energibehov kan en bil ladda hela parkeringstiden, och talet blir
   // fysiskt omöjligt (922 km, granskningen 2026-09-12). Varningen är enda
   // spärren mot det i den här vyn.
