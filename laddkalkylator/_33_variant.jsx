@@ -574,6 +574,7 @@ function InstrumentVariant() {
   const profile = C.PROFILES[profileKey];
   // Härled fastighetstyp ur faktiska värden (fix #1/#2) — chippen highlightas bara om värdena matchar
   const propertyType = matchPropertyType(profileKey, parkingHours, peakOcc, occPct);
+  const propertyTypeEnkelt = matchPropertyTypeUtanTid(profileKey, peakOcc, occPct);
 
   const energy = React.useMemo(() => C.computeEnergy({
     outlets, hubs, capPerHub, systemCap,
@@ -659,11 +660,11 @@ function InstrumentVariant() {
   if (uiMode === 'simple') {
     return (
       <SimpleMode
-        propertyType={propertyType} applyPropertyType={applyPropertyType}
+        propertyType={propertyTypeEnkelt} applyPropertyType={applyPropertyType}
         profileKey={profileKey}
         fuseSizeA={fuseSizeA} setFuseSizeA={setFuseSizeA}
         existingLoadPct={existingLoadPct}
-        parkingHours={parkingHours} peakOcc={peakOcc}
+        parkingHours={parkingHours} setParkingHours={setParkingHours} peakOcc={peakOcc}
         outlets={outlets} setOutlets={setOutlets}
         carAcLimit={carAcLimit} efficiency={efficiency} strategy={strategy}
         setUiMode={handleSetUiMode}
@@ -806,6 +807,9 @@ function schablonBatteri() {
 function SimpleMode(p) {
   const C = window.Amp5Calc;
   const profile = C.PROFILES[p.profileKey] || C.PROFILES.office;
+  // Fastighetstypens standardvärden — används för att visa vad parkeringstiden
+  // ÄR satt till av presetet, och för att kunna gå tillbaka dit.
+  const preset = PROPERTY_PRESETS[p.propertyType] || PROPERTY_PRESETS.brf;
 
   // BASLASTEN ÄR NOLL HÄR, MED FLIT (Daniel 2026-09-16: "I det enkla läget så
   // skippar vi baslasten. Har vi 63A så räkna med 44kW osv!").
@@ -904,6 +908,9 @@ function SimpleMode(p) {
         <SimpleStep n="3" title="Hur många laddplatser vill ni ha?"
           hint="Det kunden oftast redan vet: antalet parkeringsplatser som ska få laddning.">
           <SimplePlacesSlider value={p.outlets} onChange={p.setOutlets} />
+          <SimpleJustera
+            parkingHours={p.parkingHours} setParkingHours={p.setParkingHours}
+            standard={preset.parkingHours} fastighet={preset.label} />
         </SimpleStep>
 
         {/* Svaret */}
@@ -1071,6 +1078,61 @@ function SimplePlacesSlider({ value, onChange }) {
         <SliderField utanRubrik label="Antal laddplatser"
           value={v} onChange={onChange} min={1} max={MAX} step={1} suffix="st" />
       </div>
+    </div>
+  );
+}
+
+// Parkeringstiden, hopfälld. Den hör inte till de tre frågorna — fastighetstypen
+// ger ett rimligt värde, och Greta ska inte behöva ta ställning till den. Men den
+// flyttar svaret mer än något annat dolt antagande (ett p-hus där bilarna står
+// fyra timmar är en annan anläggning än ett där de står tolv), så säljaren måste
+// komma åt den utan att byta till Avancerat.
+//
+// Rubriken visar värdet hopfälld, så man ser vad som gäller utan att öppna, och
+// avvikelsen mot fastighetstypens standard skrivs ut när den finns.
+function SimpleJustera({ parkingHours, setParkingHours, standard, fastighet }) {
+  const [open, setOpen] = React.useState(false);
+  const avviker = parkingHours !== standard;
+  return (
+    <div style={{ marginTop: 14 }}>
+      <button onClick={() => setOpen(!open)}
+        style={{
+          background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+          fontFamily: I.mono, fontSize: 10.5, letterSpacing: 1, textTransform: 'uppercase',
+          color: I.ink2, display: 'flex', alignItems: 'center', gap: 7,
+        }}>
+        <span style={{
+          color: I.accent, transform: open ? 'rotate(90deg)' : 'none',
+          transition: 'transform 140ms', display: 'inline-block',
+        }}>▸</span>
+        Hur länge står bilarna? {parkingHours} h
+        {avviker && <span style={{ color: I.accentDeep, textTransform: 'none', letterSpacing: 0 }}>
+          · ändrad från {standard}
+        </span>}
+      </button>
+      {open && (
+        <div style={{
+          marginTop: 12, padding: '16px 18px 10px', background: I.surface,
+          border: '1px solid ' + I.line, borderRadius: 2,
+        }}>
+          <div style={{ fontSize: 12.5, color: I.ink2, lineHeight: 1.6, marginBottom: 14 }}>
+            Hur länge en bil står parkerad avgör hur mycket den hinner ladda. Vi räknar
+            med <strong>{standard} timmar</strong> för {fastighet} — ändra om ni vet bättre.
+          </div>
+          <div style={{ padding: '0 13px' }}>
+            <SliderField label="Parkeringstid" value={parkingHours}
+              onChange={setParkingHours} min={1} max={24} step={1} suffix="h" />
+          </div>
+          {avviker && (
+            <button onClick={() => setParkingHours(standard)}
+              style={{
+                marginTop: 6, background: 'transparent', border: 'none', padding: 0,
+                cursor: 'pointer', fontFamily: I.sans, fontSize: 11.5, color: I.accentDeep,
+                textDecoration: 'underline',
+              }}>Tillbaka till {standard} h</button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1697,6 +1759,22 @@ const PROPERTY_PRESETS = {
 
 // Härled vald fastighetstyp ur faktiska värden — så chippen aldrig "ljuger" om
 // vad som faktiskt beräknas (fix #1/#2). Returnerar null om inget preset matchar exakt.
+// Enkla läget låter parkeringstiden justeras i en utfällning, och med den i
+// matchningen slocknade fastighetschippet så fort någon rörde reglaget — det ser
+// ut som att steg 1 glömts bort. Chippet matchas där på profil och beläggning i
+// stället. Det ljuger inte: den justerade tiden står utskriven i utfällningen,
+// bredvid fastighetstypens standardvärde.
+function matchPropertyTypeUtanTid(profileKey, peakOcc, occPct) {
+  for (const [key, p] of Object.entries(PROPERTY_PRESETS)) {
+    if (p.profileKey === profileKey
+      && Math.abs(p.peakOcc - peakOcc) < 0.001
+      && Math.abs(p.occPct - occPct) < 0.001) {
+      return key;
+    }
+  }
+  return null;
+}
+
 function matchPropertyType(profileKey, parkingHours, peakOcc, occPct) {
   for (const [key, p] of Object.entries(PROPERTY_PRESETS)) {
     if (p.profileKey === profileKey

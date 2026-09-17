@@ -640,6 +640,20 @@ lagg('enkelt läge', 'UI:t frågar efter platser och svarar i km', () => {
   // Texterna får inte påstå en marginal som inte längre dras av.
   if (/marginalen mot huvudsäkringen/.test(VARIANT))
     fel.push('enkla läget talar om en säkerhetsmarginal som inte finns');
+  // Parkeringstiden ska gå att justera, men DOLD (Daniel 2026-09-17). Den
+  // flyttar svaret mer än något annat dolt antagande — 10 h ger 101 km där
+  // 17 h ger 171 — så säljaren måste komma åt den utan att byta läge.
+  if (!/function SimpleJustera/.test(VARIANT))
+    fel.push('utfällningen för parkeringstid saknas');
+  if (!/<SimpleJustera/.test(VARIANT))
+    fel.push('SimpleJustera renderas inte — utfällningen når aldrig skärmen');
+  // Chippet matchas UTAN parkingHours i enkla läget. Med den i matchningen
+  // slocknar fastighetsvalet så fort tiden justeras, vilket ser ut som en bugg.
+  // Matcha ANROPET, inte definitionen: en regex på funktionsnamnet ensamt
+  // överlever att anropet byts ut, eftersom `function matchPropertyTypeUtanTid`
+  // står kvar. (Upptäckt vid mutationstest av just den här spärren.)
+  if (!/propertyTypeEnkelt = matchPropertyTypeUtanTid\(/.test(VARIANT))
+    fel.push('enkla lägets chip matchas med parkingHours igen — det slocknar då vid justering');
   // Utan energibehov kan en bil ladda hela parkeringstiden, och talet blir
   // fysiskt omöjligt (922 km, granskningen 2026-09-12). Varningen är enda
   // spärren mot det i den här vyn.
