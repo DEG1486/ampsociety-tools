@@ -8,7 +8,7 @@
 // svaret var att webbläsaren serverade den gamla filen ur cachen (Pages sätter
 // `max-age=600`). Versionen syntes då bara i PDF:en, alltså efter en export.
 // `verifiera-bygge.mjs` jämför den här raden mot literalen i _33_pdf.jsx.
-const APP_VERSION = '3.10.0';
+const APP_VERSION = '3.10.1';
 
 // ───────── PDF export helper ─────────
 function buildPdfData({ mode, outlets, hubs, capPerHub, systemCap, parkingHours,
@@ -345,6 +345,12 @@ function buildSimplePdfData({ res, fastighet, profilLabel, fuseSizeA, parkingHou
       effektivTimmar: res.effektivTimmar,
       spreadHours: res.spreadHours,
       hubs: res.hubs,
+      // Hubbregelns tre tal följer med till rapporten. Utan dem kan PDF:en inte
+      // säga samma sak som skärmen om VILKET tak som binder, och "olika svar i
+      // olika vyer" är projektets vanligaste felklass (G1, G7).
+      outletsPerHub: res.outletsPerHub,
+      limitedByHubs: res.limitedByHubs,
+      availableKW: res.availableKW,
       servisKW: res.servisKW,
       systemCapKW: res.systemCapKW,
       totalEnergyDay: res.energy.totalEnergyDay,
@@ -870,6 +876,11 @@ function SimpleMode(p) {
     fuseSizeA: p.fuseSizeA,
     existingLoadPct: 0,
     outlets: p.outlets,
+    // Hubbantalet följer PLATSERNA, och platser per hub följer fastighetstypen
+    // — se noten vid PROPERTY_PRESETS och den långa noten vid hubbräkningen i
+    // _33_calc.js. Utelämnas fältet faller computeSimple tillbaka på det
+    // fysiska sessionstaket (30/hub), inte på servisen.
+    outletsPerHub: preset.outletsPerHub,
     parkingHours: p.parkingHours,
     spreadHours: preset.spreadHours ?? 0,
     profileHours: profile.hours,
@@ -881,6 +892,10 @@ function SimpleMode(p) {
     profileLabel: profile.label,
   }), [p.fuseSizeA, p.outlets, p.parkingHours, p.profileKey, p.propertyType,
        p.peakOcc, p.carAcLimit, p.efficiency, p.strategy]);
+  // Hubbarna binder bara om bilarna inte gör det först: med tre platser på
+  // 250 A är BÅDA sanna, och då är bilens AC-tak den verkliga gränsen (34,7 kW
+  // mot hubbens 44). Rutorna nedan utesluter därför varandra.
+  const hubbTaket = res.limitedByHubs && !res.limitedByCar;
 
   const kWh = res.perOutletKWh;
   const km = Math.round(kwhTillKm(kWh));
@@ -1000,10 +1015,31 @@ function SimpleMode(p) {
               ? <>{res.parkingHours} h parkering med {C.fmt(res.spreadHours, { digits: 1 })} h spridda ankomster.</>
               : <>inom {res.parkingHours} timmars laddfönster.</>}
           </div>
+          {/* "hela anslutningen används" stod här villkorslöst och blev osant
+              när hubbregeln lades om: med 10 platser på 200 A sätter en ensam
+              SmartHub taket till 44 kW medan anslutningen bär 139. Raden säger
+              nu vilket av de två taken som faktiskt binder. */}
           <div style={{ fontSize: 12.5, color: I.mute, marginTop: 8, fontFamily: I.mono }}>
-            {hubTxt} · {C.fmt(res.systemCapKW, { digits: 1 })} kW mot elnätet · hela anslutningen används
+            {hubTxt} · {C.fmt(res.systemCapKW, { digits: 1 })} kW till laddning ·
+            {' '}{res.limitedByHubs
+              ? (res.hubs === 1 ? 'SmartHubens kapacitet' : 'SmartHubbarnas kapacitet')
+              : 'hela anslutningen används'}
           </div>
 
+          {hubbTaket && !forLite && !overBatteri && (
+            <div style={{
+              marginTop: 16, padding: '11px 14px', borderRadius: 2,
+              background: I.surface, border: '1px solid ' + I.line,
+              fontSize: 12.5, lineHeight: 1.5, color: I.ink2,
+            }}>
+              <strong>{res.hubs === 1 ? 'En SmartHub räcker' : res.hubs + ' SmartHubs räcker'} till
+              {' '}{res.outlets} platser.</strong> Anläggningen dimensioneras efter antalet
+              laddplatser — {res.outletsPerHub} per SmartHub för den här fastighetstypen.
+              Er {p.fuseSizeA} A-anslutning bär {C.fmt(res.availableKW, { digits: 0 })} kW och
+              har alltså kapacitet kvar; den tas i anspråk när fler platser läggs till, för
+              då växer anläggningen med dem.
+            </div>
+          )}
           {res.limitedByCar && !forLite && (
             <div style={{
               marginTop: 16, padding: '11px 14px', borderRadius: 2,
@@ -1268,10 +1304,19 @@ function SimpleDetails({ res, kWh, km, profil, parkingHours, peakOcc, fuseSizeA 
             en anslutning som aldrig kunnat ge dem full effekt samtidigt — de delar på
             effekten över tiden i stället.
           </div>
+          <div style={{ fontSize: 12.5, color: I.ink2, lineHeight: 1.65, marginBottom: 16 }}>
+            Antalet SmartHubs följer <strong>antalet laddplatser</strong>, inte
+            huvudsäkringens storlek: {res.outletsPerHub} platser per hub för den här
+            fastighetstypen, eftersom laddfönstrets längd avgör hur många bilar en hub
+            hinner betjäna. Effekttaket blir därmed det lägsta av vad anslutningen
+            tillåter och vad de installerade hubbarna kan dra.
+          </div>
           {rad('Elanslutning (' + fuseSizeA + ' A, 3-fas 400 V)', C.fmt(res.servisKW, { digits: 1 }) + ' kW')}
-          {rad('Effekttak för laddningen', C.fmt(res.systemCapKW, { digits: 1 }) + ' kW  (hela anslutningen)')}
-          {rad('SmartHubs', res.hubs + ' × ' + C.CAP_PER_HUB_KW + ' kW')}
           {rad('Laddplatser', res.outlets + ' st')}
+          {rad('SmartHubs', res.hubs + ' × ' + C.CAP_PER_HUB_KW + ' kW  ('
+            + res.outletsPerHub + ' platser per hub)')}
+          {rad('Effekttak för laddningen', C.fmt(res.systemCapKW, { digits: 1 }) + ' kW  ('
+            + (res.limitedByHubs ? 'hubbarnas kapacitet' : 'hela anslutningen') + ')')}
           {rad('Parkeringstid', res.parkingHours + ' h per dygn')}
           {res.spreadHours > 0 && rad('Spridda ankomster', '±' + C.fmt(res.spreadHours, { digits: 1 }) + ' h')}
           {rad('Effektiv laddtid', C.fmt(res.effektivTimmar, { digits: 1 }) + ' h på fullt tak')}
@@ -1281,10 +1326,9 @@ function SimpleDetails({ res, kWh, km, profil, parkingHours, peakOcc, fuseSizeA 
             {res.spreadHours > 0 && (<> Bilarna antas komma utspritt över
             {' '}{C.fmt(res.spreadHours, { digits: 1 })} timmar i stället för samtidigt, vilket
             låter anläggningen arbeta längre — men med färre bilar i början och slutet.
-            Spridningen växer med antalet platser.</>)} Hela anslutningen räknas som
-            tillgänglig: enkla läget antar ingen befintlig grundlast och drar inte av någon
-            säkerhetsmarginal — lastbalanseringen håller laddningen under taket, så
-            huvudsäkringen är gränsen. Har fastigheten betydande egen last (hiss, tvättstuga,
+            Spridningen växer med antalet platser.</>)} Ingen befintlig grundlast dras av
+            från anslutningen, och ingen säkerhetsmarginal heller — lastbalanseringen håller
+            laddningen under taket, så huvudsäkringen är gränsen. Har fastigheten betydande egen last (hiss, tvättstuga,
             värme) ska den dras av i Avancerat, och då minskar talet ovan.
             Övriga antaganden ur fastighetstypen: {profil}-profil, {parkingHours} h parkering,
             {' '}{Math.round(peakOcc * 100)} % beläggning i topptimmen. Räckvidden räknas på
@@ -1859,10 +1903,21 @@ const PROPERTY_PRESETS = {
   // till morgon. Tiden är enkla lägets LADDFÖNSTER per dygn och går rakt in i
   // svaret — 10 -> 15 h höjer energin per bil med 50 % i varje konfiguration.
   // Presetet delas med Avancerat, där det sätter parkeringstiden på samma sätt.
-  brf:    { label: 'BRF / bostad',  profileKey: 'residential', parkingHours: 15, peakOcc: 0.85, occPct: 0.85, spreadHours: 2, needKWh: 20, glyph: <GlyphHome /> },
-  office: { label: 'Kontor',        profileKey: 'office',      parkingHours: 9,  peakOcc: 0.85, occPct: 0.75, spreadHours: 1, needKWh: 15, glyph: <GlyphOffice /> },
-  mall:   { label: 'Köpcentrum',    profileKey: 'mall',        parkingHours: 3,  peakOcc: 0.85, occPct: 0.60, spreadHours: 0.5, needKWh: 10, glyph: <GlyphMall /> },
-  garage: { label: 'Parkeringshus', profileKey: 'flat',        parkingHours: 6,  peakOcc: 0.60, occPct: 0.55, spreadHours: 1, needKWh: 15, glyph: <GlyphFlat /> },
+  // outletsPerHub — platser per SmartHub, och därmed hela dimensioneringen i
+  // enkla läget (Daniel 2026-09-18: "Det får vara antalet uttag som bestämmer
+  // smarthubs. 1 smarthub upp till 20 uttag för kontor och runt 30 uttag för
+  // bostad."). Talen hänger ihop med LADDFÖNSTRET: en bostad har 15 timmar på
+  // sig att fördela hubbens 44 kW, ett köpcentrum har 3. Daniels två tal ligger
+  // båda på ~2 platser per laddfönstertimme, alltså ~21 kWh per bil och dygn,
+  // och köpcentrum/parkeringshus är satta efter samma logik (12 respektive 15).
+  //
+  // DOMÄNVAL, inte implementation — ändra dem med avsikt, inte i förbifarten.
+  // Spärrat i test-fynd.mjs. Hotell hör hemma här när fastighetstypen läggs
+  // till; Daniel uppskattar 15–20 platser per hub för den.
+  brf:    { label: 'BRF / bostad',  profileKey: 'residential', parkingHours: 15, peakOcc: 0.85, occPct: 0.85, spreadHours: 2, needKWh: 20, outletsPerHub: 30, glyph: <GlyphHome /> },
+  office: { label: 'Kontor',        profileKey: 'office',      parkingHours: 9,  peakOcc: 0.85, occPct: 0.75, spreadHours: 1, needKWh: 15, outletsPerHub: 20, glyph: <GlyphOffice /> },
+  mall:   { label: 'Köpcentrum',    profileKey: 'mall',        parkingHours: 3,  peakOcc: 0.85, occPct: 0.60, spreadHours: 0.5, needKWh: 10, outletsPerHub: 12, glyph: <GlyphMall /> },
+  garage: { label: 'Parkeringshus', profileKey: 'flat',        parkingHours: 6,  peakOcc: 0.60, occPct: 0.55, spreadHours: 1, needKWh: 15, outletsPerHub: 15, glyph: <GlyphFlat /> },
 };
 
 // Härled vald fastighetstyp ur faktiska värden — så chippen aldrig "ljuger" om

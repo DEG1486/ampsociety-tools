@@ -477,18 +477,35 @@ const enkelt = (o = {}) => C.computeSimple(Object.assign({
   strategy: 'priority', profileLabel: 'Bostad',
 }, o));
 
-// 4 profiler × 6 säkringar × 3 laster × 4 tider × 4 platsantal = 1 152 fall.
+// Platser per SmartHub, per fastighetstyp — måste spegla PROPERTY_PRESETS i
+// _33_variant.jsx. Spärren 'platser per SmartHub är ett domänval' nedan vaktar
+// att de två inte glider isär.
+const PER_HUB = { residential: 30, office: 20, mall: 12, flat: 15 };
+
+// 4 profiler × 6 säkringar × 3 laster × 4 tider × 9 platsantal = 2 592 fall.
 // Ett computeEnergy per fall (~1,4 ms), alltså sekunder — inte minuter som den
 // bakvända sökningen krävde.
+//
+// PLATSANTALEN ÄR VALDA, INTE RUNDA. 20, 30 och 31 ligger på och strax över
+// fastighetstypernas hubbgränser, där hubbantalet byter värde och energin per
+// bil hoppar. Svepet hade tidigare [1, 10, 40, 120] och kunde därför inte se
+// gränserna alls — samma fälla som MAX_DAYS-fyndet i v3.9.3: en spärr är bara
+// värd sitt svep.
+//
+// 61 och 80 kom till av samma skäl, efter ett mutationstest: med hoppet 40 ->
+// 120 var mutationen "tappa en hub över 60 platser" OSYNLIG. Vid 120 platser
+// kapar nätets tak ändå antalet i varje svept säkring, så bortfallet syntes
+// aldrig. Kontor på 250 A och 61 platser visar det: fyra hubbar mot tre.
 const ENKELTSVEP = (() => {
   const ut = [];
   for (const pk of ['residential', 'office', 'mall', 'flat'])
   for (const a of [25, 50, 63, 100, 160, 250])
   for (const last of [0, 0.4, 0.8])
   for (const L of [1, 3, 10, 24])
-  for (const n of [1, 10, 40, 120]) {
+  for (const n of [1, 10, 20, 30, 31, 40, 61, 80, 120]) {
     const inp = {
       fuseSizeA: a, existingLoadPct: last, outlets: n, parkingHours: L,
+      outletsPerHub: PER_HUB[pk],
       profileHours: C.PROFILES[pk].hours, peakOccupancyPct: 0.85,
       capPerHub: 44, hwLimitKW: 11, efficiency: 0.95,
       strategy: 'priority', profileLabel: C.PROFILES[pk].label,
@@ -525,62 +542,157 @@ lagg('enkelt läge', 'svaret kräver aldrig servisutökning', () => {
   return fel;
 });
 
-lagg('enkelt läge', 'taket är HELA anslutningen, ingen marginal', () => {
+lagg('enkelt läge', 'ingen marginal mot säkringen, och taket är det lägsta av två', () => {
   // Daniel 2026-09-17: "Nu är det 10% marginal mot säkring, det behövs inte."
-  // 63 A ska betyda 44 kW, inte 39. Faller om GRID_MARGIN smyger tillbaka in i
-  // systemCap — vilket är lätt gjort, eftersom resten av appen använder den.
+  // 63 A ska betyda 44 kW, inte 39. Faller om GRID_MARGIN smyger tillbaka in —
+  // vilket är lätt gjort, eftersom resten av appen använder den.
+  //
+  // Spärren jämförde tidigare systemCapKW rakt mot availableKW. Sedan hubbregeln
+  // lades om (2026-09-18: uttagen bestämmer hubbarna, inte strömmen) är det två
+  // olika storheter: availableKW är vad ELNÄTET tillåter, systemCapKW vad
+  // anläggningen faktiskt kan dra. Marginalkravet hör hemma på det första,
+  // hårdvarukravet på det andra — och båda måste vaktas, annars kan en marginal
+  // smyga tillbaka genom det led spärren inte tittar på.
   const fel = [];
   for (const f of ENKELTSVEP) {
-    if (Math.abs(f.r.systemCapKW - f.r.availableKW) > 1e-9) {
-      fel.push(`${f.a}A last=${f.last}: tak ${f.r.systemCapKW.toFixed(2)} kW av `
-        + `${f.r.availableKW.toFixed(2)} tillgängliga — en marginal dras av igen`);
+    const servis = Math.sqrt(3) * 400 * f.a / 1000;
+    const vantatTillgangligt = servis * (1 - f.last);
+    if (Math.abs(f.r.availableKW - vantatTillgangligt) > 1e-9) {
+      fel.push(`${f.a}A last=${f.last}: tillgängligt ${f.r.availableKW.toFixed(2)} kW av `
+        + `${vantatTillgangligt.toFixed(2)} — en marginal dras av igen`);
       if (fel.length > 2) break;
+    }
+    const vantatTak = Math.min(f.r.availableKW, f.r.hubs * 44);
+    if (Math.abs(f.r.systemCapKW - vantatTak) > 1e-9) {
+      fel.push(`${f.pk} ${f.a}A n=${f.n}: tak ${f.r.systemCapKW.toFixed(2)} kW, väntat `
+        + `min(${f.r.availableKW.toFixed(2)} nätet, ${(f.r.hubs * 44).toFixed(2)} hubbarna)`);
+      if (fel.length > 4) break;
     }
   }
   // Läroboksfallet i klartext: 63 A utan grundlast ska ge hela märkeffekten.
+  // 20 platser ger en hub (44 kW), så anslutningen är den som binder här.
   const r = enkelt({ fuseSizeA: 63, existingLoadPct: 0 });
+  if (Math.abs(r.availableKW - 43.648) > 0.01) {
+    fel.push(`63 A gav ${r.availableKW.toFixed(2)} kW tillgängligt, väntat 43,65 (√3 × 400 × 63)`);
+  }
   if (Math.abs(r.systemCapKW - 43.648) > 0.01) {
-    fel.push(`63 A gav ${r.systemCapKW.toFixed(2)} kW till laddning, väntat 43,65 (√3 × 400 × 63)`);
+    fel.push(`63 A + 20 platser gav taket ${r.systemCapKW.toFixed(2)} kW, väntat 43,65 — `
+      + `en ensam hub (44 kW) ska inte kapa en 63 A-anslutning`);
   }
   return fel;
 });
 
-lagg('enkelt läge', 'fler platser ⇒ aldrig mer energi per bil', () => {
+lagg('enkelt läge', 'fler platser ⇒ aldrig mer energi per bil, utom vid en hubbgräns', () => {
   // Monotonicitet i det reglage kunden drar i. Bryts den visar UI:t att varje
   // bil får MER ju fler som delar på samma effekt — ett svar som ser ut som ett
   // fel för vem som helst, och som skulle dölja hela avvägningen läget finns för.
+  //
+  // UTOM VID EN HUBBGRÄNS, och det är inte en uppmjukning för att få spärren
+  // grön. Sedan 2026-09-18 följer hubbantalet platserna: 30 bostadsplatser är en
+  // SmartHub à 44 kW, 31 är två à 88. Den 31:a bilen fördubblar anläggningens
+  // effekt, och då får varje bil mer — uppmätt som mest 1,91x (bostad, 160 A,
+  // 24 h, 30 -> 31 platser). Det är produktens verkliga beteende, inte ett
+  // modellfel, och att kräva bort det vore att kräva att appen döljer det.
+  //
+  // Spärren vaktar i stället två egenskaper som INTE får brytas:
+  //
+  //   (a) utan ankomstspridning, alltså i den rena worst case-modellen, ska
+  //       kWh/bil vara fallande inom samma hubbantal och aldrig öka mer än
+  //       hubbantalet gör. Exakt krav, ingen slack.
+  //   (b) TOTAL energi per dygn får aldrig minska när platserna ökar. Fler
+  //       platser kan aldrig göra anläggningen sämre.
+  //
+  // Not: med ankomstspridning PÅ finns 29 steg (av 28 800 svepta) där kWh/bil
+  // stiger upp till 2,94 % utan att hubbantalet ändras — spridningen växer med
+  // antalet platser och förlänger fönstret snabbare än platserna späder ut det.
+  // Uppmätt IDENTISKT i bygget före hubbregeln, alltså ett befintligt drag i
+  // spridningsmodellen från v3.10.0, inte ett nytt fel. Därför (a) utan spridning.
   const fel = [];
-  for (const a of [25, 63, 160]) for (const L of [3, 10, 24]) {
-    let förra = Infinity;
-    for (const n of [1, 5, 10, 20, 40, 60, 80, 100, 120]) {
-      const kWh = enkelt({ fuseSizeA: a, parkingHours: L, outlets: n }).perOutletKWh;
-      if (kWh > förra + 1e-6) {
-        fel.push(`${a}A L=${L}: ${n} platser gav ${kWh.toFixed(2)} kWh/bil, mer än föregående steg (${förra.toFixed(2)})`);
+  const PROFILER = [['residential', 30], ['office', 20], ['mall', 12], ['flat', 15]];
+  for (const [pk, perHub] of PROFILER)
+  for (const a of [25, 63, 125, 160, 250])
+  for (const L of [3, 10, 24]) {
+    let f = null;
+    for (let n = 1; n <= 62; n++) {
+      const gemensamt = { fuseSizeA: a, existingLoadPct: 0, parkingHours: L, outlets: n,
+        outletsPerHub: perHub, profileHours: C.PROFILES[pk].hours };
+      // (a) utan spridning
+      const r = C.computeSimple(Object.assign({ spreadHours: 0, capPerHub: 44,
+        hwLimitKW: 11, efficiency: 0.95 }, gemensamt));
+      if (f) {
+        if (r.hubs === f.hubs && r.perOutletKWh > f.kWh + 1e-6) {
+          fel.push(`${pk} ${a}A L=${L}: ${n} platser gav ${r.perOutletKWh.toFixed(2)} kWh/bil, `
+            + `mer än ${n - 1} platser (${f.kWh.toFixed(2)}) med samma ${r.hubs} hubbar`);
+        } else if (r.perOutletKWh * f.hubs > f.kWh * r.hubs + 1e-6) {
+          fel.push(`${pk} ${a}A L=${L}: ${n - 1}->${n} platser höjde kWh/bil `
+            + `${(r.perOutletKWh / f.kWh).toFixed(2)}x medan hubbarna bara gick `
+            + `${f.hubs}->${r.hubs} — mer energi än hårdvaran motiverar`);
+        }
       }
-      förra = kWh;
+      f = { kWh: r.perOutletKWh, hubs: r.hubs };
+      // (b) med spridning: totalen får aldrig falla
+      const m = C.computeSimple(Object.assign({ spreadHours: 1, capPerHub: 44,
+        hwLimitKW: 11, efficiency: 0.95 }, gemensamt));
+      if (f.tot != null && m.energy.totalEnergyDay < f.tot - 1e-6) {
+        fel.push(`${pk} ${a}A L=${L}: ${n} platser gav LÄGRE total energi `
+          + `(${m.energy.totalEnergyDay.toFixed(1)}) än ${n - 1} platser (${f.tot.toFixed(1)})`);
+      }
+      f.tot = m.energy.totalEnergyDay;
+      if (fel.length > 4) return fel.slice(0, 4);
     }
   }
   return fel.slice(0, 4);
 });
 
-lagg('enkelt läge', 'hubbarna följer effekten, inte bara uttagsantalet', () => {
-  // Med enbart autoräkningen (ceil(n / 54)) blev en ensam hub à 44 kW taket
-  // långt innan servisen var slut: en 250 A-servis levererade inte mer än en
-  // 100 A. Symtomet var ett svar som slutade förbättras när säkringen växte.
+lagg('enkelt läge', 'UTTAGEN bestämmer hubbarna, inte strömmen', () => {
+  // Daniel 2026-09-18, om det som stod här före:
+  //
+  //   "Om jag väljer 200A huvudsäkring och 10 platser så väljer den automatiskt
+  //    2 smarthubs. Det får vara antalet uttag som bestämmer smarthubs."
+  //
+  // Formeln var max(ceil(systemCap/44), ceil(n/54), ceil(n/30)) och det första
+  // ledet lät servisen driva upp antalet: 200 A ger 138,6 kW, alltså FYRA
+  // hubbar — 216 uttagsplatser till tio bilar. Den gamla spärren här kodade
+  // exakt det beteendet och måste vändas med det.
+  //
+  // MUTATIONSTESTAD: återinförs ceil(systemCap/44) som golv faller ledet
+  // 'strömmen driver upp antalet' nedan i hundratals fall.
   const fel = [];
   for (const f of ENKELTSVEP) {
-    if (f.r.hubs * 44 < f.r.systemCapKW - 1e-6) {
-      fel.push(`${f.pk} ${f.a}A last=${f.last}: ${f.r.hubs} hubbar (${f.r.hubs * 44} kW) `
-        + `bär inte effekttaket ${f.r.systemCapKW.toFixed(1)} kW`);
+    const perHub = PER_HUB[f.pk];
+    const forPlatser = Math.ceil(f.n / perHub);
+    const minst = Math.max(1, Math.ceil(f.n / C.OUTLETS_PER_HUB), Math.ceil(f.n / C.MAX_SESSIONS_PER_HUB));
+    const natetBar = Math.max(1, Math.ceil(f.r.availableKW / 44));
+    const vantat = Math.max(minst, Math.min(forPlatser, natetBar));
+    if (f.r.hubs !== vantat) {
+      fel.push(`${f.pk} ${f.a}A last=${f.last} n=${f.n}: ${f.r.hubs} hubbar, väntat ${vantat} `
+        + `(platser ${forPlatser}, fysiskt golv ${minst}, nätet bär ${natetBar})`);
+      if (fel.length > 3) break;
+    }
+    // Strömmen får aldrig driva upp antalet över vad platserna kräver.
+    if (f.r.hubs > Math.max(minst, forPlatser)) {
+      fel.push(`${f.pk} ${f.a}A n=${f.n}: ${f.r.hubs} hubbar för ${f.n} platser `
+        + `(${perHub}/hub kräver ${forPlatser}) — strömmen driver upp antalet igen`);
+      if (fel.length > 3) break;
+    }
+    // ...och hubbar servisen inte kan mata ska inte föreslås. Utan det taket får
+    // 60 köpcentrumplatser (12/hub) fem hubbar även på en 63 A-anslutning.
+    if (f.r.hubs > Math.max(minst, natetBar)) {
+      fel.push(`${f.pk} ${f.a}A n=${f.n}: ${f.r.hubs} hubbar bakom en anslutning som bär `
+        + `${f.r.availableKW.toFixed(1)} kW (${natetBar} hubbar)`);
       if (fel.length > 3) break;
     }
   }
-  // Och svaret får inte plana ut: större säkring ska ge mer per bil så länge
-  // något annat än effekten inte binder (bilens AC-tak, parkeringstiden).
-  const små = enkelt({ fuseSizeA: 63, outlets: 40, parkingHours: 10 }).perOutletKWh;
-  const stora = enkelt({ fuseSizeA: 250, outlets: 40, parkingHours: 10 }).perOutletKWh;
-  if (stora <= små + 1e-6) {
-    fel.push(`250 A gav ${stora.toFixed(1)} kWh/bil, inte mer än 63 A (${små.toFixed(1)}) — hubbarna följer inte effekten`);
+  // Daniels fall i klartext.
+  const d = enkelt({ fuseSizeA: 200, existingLoadPct: 0, outlets: 10, parkingHours: 15,
+    outletsPerHub: 30, profileHours: C.PROFILES.residential.hours });
+  if (d.hubs !== 1) {
+    fel.push(`200 A + 10 bostadsplatser gav ${d.hubs} SmartHubs, väntat 1 — `
+      + `uttagen ska bestämma, inte huvudsäkringen`);
+  }
+  if (Math.abs(d.systemCapKW - 44) > 1e-9) {
+    fel.push(`200 A + 10 platser: taket ${d.systemCapKW.toFixed(1)} kW, väntat 44 — `
+      + `en ensam hub kan inte dra anslutningens 138,6 kW`);
   }
   return fel;
 });
@@ -754,6 +866,88 @@ lagg('enkelt läge', 'påstår aldrig att alla platser laddar samtidigt', () => 
       fel.push(`${n} platser gav ${r.spreadHours.toFixed(1)} h spridning, väntat ${vantat}`);
     }
   }
+  return fel;
+});
+
+lagg('enkelt läge', 'platser per SmartHub är ett domänval', () => {
+  // Daniel 2026-09-18: "1 smarthub upp till 20 uttag för kontor och runt 30
+  // uttag för bostad. därefter blir det två smarthubs."
+  //
+  // Talen styr HELA dimensioneringen i enkla läget: hubbantalet följer dem, och
+  // effekttaket följer hubbantalet. Ett ändrat tal flyttar både anläggningen och
+  // km-svaret. De hänger ihop med laddfönstret — en bostad har 15 timmar på sig
+  // att fördela hubbens 44 kW, ett köpcentrum 3 — och köpcentrum/parkeringshus
+  // är satta efter samma ~2-platser-per-laddfönstertimme som Daniels två tal.
+  //
+  // Samma teckenjämförelse som laddfönsterspärren ovan: ingen regex, eftersom en
+  // backslash som inte överlever verktygskedjan ger en spärr som inte KAN falla.
+  const fel = [];
+  const bas = VARIANT.indexOf('const PROPERTY_PRESETS');
+  if (bas < 0) return ['PROPERTY_PRESETS hittades inte i _33_variant.jsx'];
+  for (const [k, v] of [['brf', 30], ['office', 20], ['mall', 12], ['garage', 15]]) {
+    const i = VARIANT.indexOf(k + ':', bas);
+    const radslut = i < 0 ? -1 : VARIANT.indexOf(String.fromCharCode(10), i);
+    const rad = i < 0 ? '' : VARIANT.slice(i, radslut);
+    const p = rad.indexOf('outletsPerHub:');
+    if (p < 0) { fel.push(`PROPERTY_PRESETS.${k} saknar outletsPerHub`); continue; }
+    const varde = parseInt(rad.slice(p + 14), 10);
+    if (varde !== v) fel.push(`PROPERTY_PRESETS.${k} har ${varde} platser/hub, väntat ${v}`);
+  }
+  // Och värdet måste NÅ beräkningen. Ett preset ingen läser är ett tal utan
+  // verkan — och det är precis vad needKWh blev när enkla läget skrevs om.
+  if (!VARIANT.includes('outletsPerHub: preset.outletsPerHub')) {
+    fel.push('SimpleMode skickar inte preset.outletsPerHub till computeSimple — '
+      + 'fastighetstypen styr då inte hubbantalet');
+  }
+  // Fastighetstypens tal får aldrig begära mer än hårdvaran klarar.
+  for (const v of [30, 20, 12, 15]) {
+    if (v > C.MAX_SESSIONS_PER_HUB || v > C.OUTLETS_PER_HUB) {
+      fel.push(`${v} platser/hub överstiger hubbens tak `
+        + `(${C.OUTLETS_PER_HUB} uttag, ${C.MAX_SESSIONS_PER_HUB} sessioner)`);
+    }
+  }
+  return fel;
+});
+
+lagg('enkelt läge', 'skärm och rapport är eniga om vilket tak som binder', () => {
+  // Projektets vanligaste felklass: rätt beräkning, olika påstående i de två
+  // vyerna (G1: 346 km på skärmen mot 186 i rapporten; G7: olika elnätsstatus).
+  //
+  // Här är risken konkret. Före hubbregeln skrev BÅDA vyerna villkorslöst att
+  // hela anslutningen används — sant så länge hubbantalet följde servisen. Nu
+  // kan hubbarna binda i stället, och då måste båda säga det. Missar den ena
+  // omskrivningen står det "138,6 kW mot elnätet" i rapporten för en anläggning
+  // skärmen säger levererar 44.
+  const fel = [];
+  if (!VARIANT.includes('limitedByHubs')) {
+    fel.push('skärmen läser inte limitedByHubs — den kan inte säga vilket tak som binder');
+  }
+  if (!PDF.includes('limitedByHubs')) {
+    fel.push('PDFSimple läser inte limitedByHubs — rapporten kan inte säga vilket tak som binder');
+  }
+  if (!VARIANT.includes('limitedByHubs: res.limitedByHubs')) {
+    fel.push('buildSimplePdfData skickar inte limitedByHubs vidare, så PDF:ens gren är död kod');
+  }
+  if (!VARIANT.includes('outletsPerHub: res.outletsPerHub')) {
+    fel.push('buildSimplePdfData skickar inte outletsPerHub vidare');
+  }
+  // Etiketten "mot elnätet" var villkorslös och blev osann. Båda vyerna ska
+  // numera säga vilket tak det är.
+  if (PDF.includes("rad('Effekttak mot elnätet'")) {
+    fel.push('PDFSimple skriver fortfarande "Effekttak mot elnätet" villkorslöst — '
+      + 'osant när hubbarna sätter taket');
+  }
+  for (const [namn, txt] of [['skärmen', VARIANT], ['PDFSimple', PDF]]) {
+    if (!txt.includes('hubbarnas kapacitet')) {
+      fel.push(`${namn} säger aldrig att hubbarna kan vara det som binder`);
+    }
+  }
+  // Och fältet måste faktiskt kunna bli sant respektive falskt, annars vaktar
+  // grenarna ingenting. Två konfigurationer som ska hamna på var sitt håll.
+  const hubbBinder = enkelt({ fuseSizeA: 250, existingLoadPct: 0, outlets: 10, outletsPerHub: 30 });
+  const natetBinder = enkelt({ fuseSizeA: 25, existingLoadPct: 0, outlets: 10, outletsPerHub: 30 });
+  if (!hubbBinder.limitedByHubs) fel.push('250 A + 10 platser: hubbarna borde binda, limitedByHubs är false');
+  if (natetBinder.limitedByHubs) fel.push('25 A + 10 platser: anslutningen borde binda, limitedByHubs är true');
   return fel;
 });
 

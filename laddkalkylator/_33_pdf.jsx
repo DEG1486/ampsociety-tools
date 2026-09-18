@@ -826,13 +826,25 @@ function PDFSimple({ data }) {
             <Balk width={20} color={BRAND.ink} height={3} style={{ position: 'relative', top: -5 }} />
             <div style={{ fontFamily: BRAND.serif, fontSize: 18, fontWeight: 500, letterSpacing: -0.2 }}>Anläggningen</div>
           </div>
-          {rad('SmartHubs', `${o.hubs} × ${Amp.CAP_PER_HUB_KW} kW`)}
+          {/* Platser per hub ryms PÅ SmartHub-raden, inte på en egen. Som egen
+              rad kostade den 14 px, och sida 1 hade 1,8 px kvar till sidfoten
+              med ett långt projektnamn — antagandeblocket la sig ovanpå den.
+              Talet är viktigt (det är regeln som bestämmer hubbantalet), men
+              det är två ord, inte en rad. */}
+          {rad('SmartHubs', `${o.hubs} × ${Amp.CAP_PER_HUB_KW} kW`
+            + (o.outletsPerHub != null ? `  ·  ${o.outletsPerHub} platser/hub` : ''))}
           {/* EN DECIMAL, och skärmen gör likadant. Paritet är kravet, inte
               antalet decimaler: en period visade rapporten 43,6 och skärmen 44
               (G1-mönstret i miniatyr). Daniel valde 43,6 på båda — beräkningen
               använder 43,648, och då ska ingen vy visa ett tredje tal. */}
           {rad('Elanslutning', `${Amp.fmt(o.servisKW, { digits: 1 })} kW`)}
-          {rad('Effekttak mot elnätet', `${Amp.fmt(o.systemCapKW, { digits: 1 })} kW`)}
+          {/* Etiketten sa "mot elnätet" villkorslöst. Sedan hubbregeln lades om
+              (uttagen bestämmer antalet, inte strömmen) är taket det LÄGSTA av
+              anslutningen och hubbarnas märkeffekt — och för 10 platser på 200 A
+              är det hubbens 44 kW, inte anslutningens 139. Skärmen skriver samma
+              parentes; paritet är kravet. */}
+          {rad('Effekttak för laddningen', `${Amp.fmt(o.systemCapKW, { digits: 1 })} kW`
+            + (o.limitedByHubs ? '  (hubbarnas kapacitet)' : '  (hela anslutningen)'))}
           {rad('Effektiv laddtid', `${Amp.fmt(o.effektivTimmar, { digits: 1 })} h på fullt tak`)}
         </div>
       </div>
@@ -851,6 +863,12 @@ function PDFSimple({ data }) {
           (dynamisk lastbalansering), så att huvudsäkringen aldrig överbelastas — det är
           därför {Amp.fmt(o.systemCapKW, { digits: 1 })} kW räcker till {i.outlets} platser
           utan servisutökning.
+          {/* EN rad, med flit. Den långa versionen (som också skrev ut hur mycket
+              anslutningen bär) kostade två rader till och la antagandeblocket
+              ovanpå sidfoten med ett långt projektnamn. Skärmen har utrymme för
+              hela resonemanget; rapporten har 1123 px. */}
+          {o.outletsPerHub != null && (<> Antalet SmartHubs följer laddplatserna
+          ({o.outletsPerHub} per hub här), inte huvudsäkringen.</>)}
         </div>
       </div>
 
@@ -901,10 +919,17 @@ function PDFSimple({ data }) {
           <div style={{ fontSize: 9.5, lineHeight: 1.55, color: BRAND.ink2 }}>
             Energi per bil = effekttak × effektiv laddtid / platser:
             {' '}{Amp.fmt(o.systemCapKW, { digits: 1 })} kW × {Amp.fmt(o.effektivTimmar, { digits: 1 })} h
+            {/* Här stod en mening till om att effekttaket är det lägsta av
+                anslutningen och hubbarna. Den sprängde sida 1 med ett långt
+                projektnamn: antagandeblocket ligger i flödet och sköts ner
+                OVANPÅ sidfoten, 100 % krock (matt-pdf.mjs fångade det). Samma
+                sak står redan i tabellen ovan — "44,0 kW (hubbarnas kapacitet)"
+                — och i bildtexten under diagrammet. Tre gånger är inte värt en
+                krock i ett kundunderlag. */}
             / {i.outlets} platser. En laddning per plats och dygn.
             {o.spreadHours > 0 && (<> Bilarna antas komma utspritt över
-            {' '}{Amp.fmt(o.spreadHours, { digits: 1 })} timmar, inte samtidigt.</>)} Hela
-            anslutningen räknas som tillgänglig — ingen befintlig grundlast avdragen. Räckvidd för en genomsnittsbil,
+            {' '}{Amp.fmt(o.spreadHours, { digits: 1 })} timmar, inte samtidigt.</>)} Ingen
+            befintlig grundlast avdragen från anslutningen. Räckvidd för en genomsnittsbil,
             {' '}{Amp.fmt(i.carKwh100, { digits: 1 })} kWh/100 km vid verklig förbrukning;
             vintertid går det åt 20–40 % mer.
           </div>
@@ -1472,7 +1497,7 @@ function sampleData() {
       projectName: 'Brf Lindhagen · Kungsholmen',
       date: new Date().toLocaleDateString('sv-SE'),
       reportId: 'A5-' + Math.floor(Math.random() * 9000 + 1000),
-      version: '3.10.0',
+      version: '3.10.1',
     },
   };
 }

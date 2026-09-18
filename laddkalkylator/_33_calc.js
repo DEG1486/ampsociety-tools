@@ -1222,6 +1222,9 @@
   //
   // Alltså: EN laddning per plats och dygn, och laddfönstret är parkeringstiden.
   // Talet går att räkna efter på en servett, vilket är hela poängen med läget.
+  // Effekttaket är det lägsta av vad elnätet tillåter och vad de installerade
+  // hubbarna kan dra — och hubbantalet följer PLATSERNA, inte strömmen. Se den
+  // långa noten vid hubbräkningen nedan; det är den frågan som avgör talet.
   // Avancerat behåller profilmodellen — där är frågan en annan (hur ser lasten
   // ut över dygnet när närvaron varierar), och där är computeEnergy rätt.
   //
@@ -1249,6 +1252,8 @@
   //   fuseSizeA        — servissäkring (A), 3-fas 400 V
   //   existingLoadPct  — andel av servisen som redan är belastad (0–1)
   //   outlets          — antal laddplatser (reglaget användaren drar i)
+  //   outletsPerHub    — platser per SmartHub, ur fastighetstypen (se noten vid
+  //                      hubbräkningen); utelämnad => MAX_SESSIONS_PER_HUB
   //   parkingHours     — laddfönster per dygn (h)
   //   profileHours     — närvaroprofil, 24 värden; används BARA för att placera
   //                      laddfönstret på dygnet, inte för att forma efterfrågan
@@ -1273,10 +1278,70 @@
     const existingPct = Math.max(0, Math.min(0.99, num(inp.existingLoadPct, 0)));
     const existingKW = servisKW * existingPct;
     const availableKW = servisKW - existingKW;
-    const systemCapKW = availableKW;
 
     const capPerHub = Math.min(CAP_PER_HUB_KW, Math.max(1, num(inp.capPerHub, CAP_PER_HUB_KW)));
     const outlets = Math.max(1, Math.floor(num(inp.outlets, 1)));
+
+    // --- Antalet SmartHubs, och därmed effekttaket -------------------------
+    // UTTAGEN BESTÄMMER HUBBARNA, INTE STRÖMMEN (Daniel 2026-09-18):
+    //
+    //   "Om jag väljer 200A huvudsäkring och 10 platser så väljer den
+    //    automatiskt 2 smarthubs. Det får vara antalet uttag som bestämmer
+    //    smarthubs. 1 smarthub upp till 20 uttag för kontor och runt 30 uttag
+    //    för bostad."
+    //
+    // Fram till dess räknades hubbarna som max(ceil(systemCap/44), ceil(n/54),
+    // ceil(n/30)) — det första ledet lät servisen bestämma. 200 A ger 138,6 kW
+    // och alltså fyra hubbar, oavsett om det är 10 platser eller 120. Fyra
+    // hubbar bär 216 uttag; att föreslå dem till tio platser är att sälja
+    // hårdvara ingen behöver.
+    //
+    // Regeln är nu en installatörsregel: så många hubbar som platserna kräver,
+    // och antalet platser per hub följer FASTIGHETSTYPEN. Bakgrunden är att
+    // laddfönstret skiljer sig — en bostad har 15 timmar på sig att fördela
+    // hubbens 44 kW, ett köpcentrum har 3. Daniels tal (kontor 20, bostad 30)
+    // motsvarar båda ungefär 2 platser per laddfönstertimme, alltså ~21 kWh per
+    // bil och dygn, och de värden som saknades är satta efter samma logik.
+    //
+    // FÖLJDEN, OCH DEN ÄR AVSIKTLIG: effekttaket är nu det LÄGSTA av vad
+    // elnätet tillåter och vad hubbarna kan dra. En anläggning kan inte
+    // leverera mer än den hårdvara som står där, och när hubbantalet inte
+    // längre skalar med servisen måste taket säga det. 200 A + 10 platser gick
+    // därmed från 165 kWh per bil (ett tal som bara bilens AC-tak höll tillbaka)
+    // till 63 kWh — det en SmartHub faktiskt hinner ge på femton timmar.
+    //
+    // outletsPerHub utelämnad => MAX_SESSIONS_PER_HUB, det fysiska sessionstaket
+    // och därmed det mest tillåtande realistiska värdet. Taken är hårda:
+    // hubben tar 54 uttag och 30 simultana sessioner (handbok 3.1, 8.3.1), och
+    // en fastighetstyp kan inte begära mer än så.
+    const perHub = Math.max(1, Math.min(
+      OUTLETS_PER_HUB, MAX_SESSIONS_PER_HUB,
+      Math.round(num(inp.outletsPerHub, MAX_SESSIONS_PER_HUB)),
+    ));
+    // Tre led, och bara ETT av dem får driva antalet uppåt:
+    //
+    //   hubbarFörPlatser  fastighetstypens regel — den som bestämmer
+    //   hubbarMinst       fysiskt golv: hubben tar 54 uttag och 30 sessioner.
+    //                     En fastighetstyp kan inte begära FÄRRE hubbar än
+    //                     uttagen fysiskt kräver.
+    //   hubbarSomNätetBär ett TAK, inte ett golv. Utan det får 60 köpcentrum-
+    //                     platser (12/hub) fem hubbar även på en 63 A-servis —
+    //                     220 kW installerat bakom en anslutning som ger 43,6.
+    //                     Ingen installatör köper hubbar servisen inte kan mata,
+    //                     och rapporten ska inte föreslå det.
+    //
+    // Strömmen är alltså tillbaka i formeln, men bara som ett tak. Det var som
+    // GOLV den gjorde skada: den drev upp antalet till fyra hubbar för tio
+    // platser. Ett tak kan bara dra ner det.
+    const hubbarForPlatser = Math.ceil(outlets / perHub);
+    const hubbarMinst = Math.max(1,
+      Math.ceil(outlets / OUTLETS_PER_HUB),
+      Math.ceil(outlets / MAX_SESSIONS_PER_HUB));
+    const hubbarSomNatetBar = Math.max(1, Math.ceil(availableKW / capPerHub));
+    const hubs = Math.max(hubbarMinst, Math.min(hubbarForPlatser, hubbarSomNatetBar));
+    const installedCapKW = hubs * capPerHub;
+    const systemCapKW = Math.min(availableKW, installedCapKW);
+    const limitedByHubs = installedCapKW < availableKW - 1e-9;
     const L = Math.min(24, Math.max(1, Math.round(num(inp.parkingHours, 1))));
     const eff = Math.max(0.5, Math.min(1, num(inp.efficiency, DEFAULT_EFFICIENCY)));
     const hwLimit = Math.max(0.1, num(inp.hwLimitKW, HW_LIMIT_KW));
@@ -1347,15 +1412,9 @@
       hourlyCars[(start + k) % 24] = n;
     }
 
-    const hubs = Math.max(
-      1,
-      Math.ceil(systemCapKW / capPerHub),                 // utnyttja servisen
-      Math.ceil(outlets / OUTLETS_PER_HUB),               // fysiska uttag (54/hub)
-      Math.ceil(outlets / MAX_SESSIONS_PER_HUB),          // simultana sessioner (30/hub)
-    );
-
     return {
       outlets, hubs, systemCapKW, availableKW, servisKW, existingKW,
+      installedCapKW, limitedByHubs, outletsPerHub: perHub,
       perOutletKWh,
       parkingHours: L,
       spreadHours: spridning,
@@ -1369,7 +1428,7 @@
         hourlyDemand,
         hourlyCars,
         effectiveCap: systemCapKW,
-        installedCap: hubs * capPerHub,
+        installedCap: installedCapKW,
         peakPowerKW: Math.max(...hourly),
         peakDemandKW: Math.max(...hourlyDemand),
         peakReductionKW: Math.max(0, Math.max(...hourlyDemand) - Math.max(...hourly)),
